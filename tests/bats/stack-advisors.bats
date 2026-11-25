@@ -166,6 +166,12 @@ if not candidates:
              "indented command block, so nothing in it is something anyone ran" % path)
 def is_command(text):
     text = text.split("#")[0].strip()
+    # A runbook that discovers its gate cannot print a command it has not found
+    # yet: what it owes the reader is the placeholder they replace with the one they
+    # discovered. That is a command someone runs, not an adjective, so it counts.
+    placeholder = re.match(r"^<([^<>]+)>$", text)
+    if placeholder and re.search(r"gate|test|lint|check|command", placeholder.group(1)):
+        return True
     if not re.match(r"^[a-z][a-z0-9_.-]*(\s|$)", text):
         return False
     if len(text.split()) < 2:
@@ -517,9 +523,28 @@ render_advisors() {
   # The section is what the parent reads as done, so an item has to be something
   # someone ran. A section of adjectives passes a read-through and ships a run that
   # verified nothing -- which is the failure this family exists to prevent.
+  #
+  # The command may be a <placeholder>: these four are seeded into every workspace,
+  # so the gate they owe is the one the reader discovers in their own repository,
+  # and a runbook cannot print a command it has not found yet.
   local name
   for name in "${ADVISORS[@]}"; do
     python3 -c "${DONE_PROG}" "$(skill_path "${name}")" command
+  done
+}
+
+@test "advisor skills: no runbook hands the reader this repository's targets as its gate" {
+  # Same tier rule as tests/bats/ez-skill-authoring.bats: an advisor runbook may
+  # name bazelisk query as ONE way to read a gate out of a repository, but a runbook
+  # that prints `bazelisk test //:something` as the gate teaches a session in a
+  # non-Bazel project to run a command that cannot exist there.
+  local name hits
+  for name in "${ADVISORS[@]}"; do
+    hits="$(grep -nE 'bazelisk (test|run) //' "$(skill_path "${name}")" || true)"
+    [ -z "${hits}" ] || {
+      printf 'FAIL: %s states a bazel target as a command to run; the family is seeded into every workspace, so it has to tell the reader how to discover the repository gate:\n%s\n' \
+        "$(skill_path "${name}")" "${hits}" >&2
+      return 1; }
   done
 }
 

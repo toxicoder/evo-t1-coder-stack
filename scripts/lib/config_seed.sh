@@ -99,6 +99,14 @@ seed_seed_targets() {
   # readers strip the leading ~ and re-root the rest at $HOME or at the
   # --container-root, so nothing here must expand early.
   #
+  # ez-bazel-first is absent from this set on purpose. It seeds into the repository it
+  # converts, at <repo>/.grok/skills/ez-bazel-first/ (the repo tier the Grok Build CLI
+  # reads), which templates/common/stack-repo-skills.sh.tftpl discovers per repository --
+  # a per-repository path is not a home-relative one, so it cannot be a reseed target
+  # here. Its six former global-home entries are retired below, so a tree that booted
+  # while they were still seeded stops advertising a Bazel gate to a project that has
+  # none.
+  #
   # The fleet family (seven agent definitions, three persona overlays, four
   # parent-side skills) is listed under the same two contracts the boot body
   # templates/common/stack-fleet.sh.tftpl implements: one marker-aware copy each
@@ -121,12 +129,16 @@ seed_seed_targets() {
     '~/.agents/skills/ez-skillify/SKILL.md	file:templates/common/ez-skillify.SKILL.md' \
     '~/.coder/skills/ez-create-skill/SKILL.md	file:templates/common/ez-create-skill.SKILL.md' \
     '~/.agents/skills/ez-create-skill/SKILL.md	file:templates/common/ez-create-skill.SKILL.md' \
-    '~/.coder/skills/ez-bazel-first/SKILL.md	file:templates/common/ez-bazel-first.SKILL.md' \
-    '~/.agents/skills/ez-bazel-first/SKILL.md	file:templates/common/ez-bazel-first.SKILL.md' \
-    '~/.coder/skills/ez-bazel-first/scripts/owned_files_check.py	file:templates/common/ez-bazel-first.owned_files_check.py' \
-    '~/.agents/skills/ez-bazel-first/scripts/owned_files_check.py	file:templates/common/ez-bazel-first.owned_files_check.py' \
-    '~/.coder/skills/ez-bazel-first/scripts/glob_budget.py	file:templates/common/ez-bazel-first.glob_budget.py' \
-    '~/.agents/skills/ez-bazel-first/scripts/glob_budget.py	file:templates/common/ez-bazel-first.glob_budget.py' \
+    '~/.coder/skills/reflect-and-evolve/SKILL.md	file:templates/common/reflect-and-evolve.SKILL.md' \
+    '~/.agents/skills/reflect-and-evolve/SKILL.md	file:templates/common/reflect-and-evolve.SKILL.md' \
+    '~/.coder/skills/reflect-and-evolve/scripts/session_signals.py	file:templates/common/reflect-and-evolve.session_signals.py' \
+    '~/.agents/skills/reflect-and-evolve/scripts/session_signals.py	file:templates/common/reflect-and-evolve.session_signals.py' \
+    '~/.coder/skills/reflect-and-evolve/references/checklist.md	file:templates/common/reflect-and-evolve.checklist.md' \
+    '~/.agents/skills/reflect-and-evolve/references/checklist.md	file:templates/common/reflect-and-evolve.checklist.md' \
+    '~/.coder/skills/reflect-and-evolve-repo/SKILL.md	file:templates/common/reflect-and-evolve-repo.SKILL.md' \
+    '~/.agents/skills/reflect-and-evolve-repo/SKILL.md	file:templates/common/reflect-and-evolve-repo.SKILL.md' \
+    '~/.coder/skills/reflect-and-evolve-repo/references/checklist.md	file:templates/common/reflect-and-evolve-repo.checklist.md' \
+    '~/.agents/skills/reflect-and-evolve-repo/references/checklist.md	file:templates/common/reflect-and-evolve-repo.checklist.md' \
     '~/.coder/skills/ez-strong-types/SKILL.md	file:templates/common/ez-strong-types.SKILL.md' \
     '~/.agents/skills/ez-strong-types/SKILL.md	file:templates/common/ez-strong-types.SKILL.md' \
     '~/.coder/skills/ez-strong-types/scripts/type_baseline.py	file:templates/common/ez-strong-types.type_baseline.py' \
@@ -137,6 +149,8 @@ seed_seed_targets() {
     '~/.agents/skills/ez-micro-plan/SKILL.md	file:templates/common/ez-micro-plan.SKILL.md' \
     '~/.coder/skills/ez-micro-plan/scripts/plan_check.py	file:templates/common/ez-micro-plan.plan_check.py' \
     '~/.agents/skills/ez-micro-plan/scripts/plan_check.py	file:templates/common/ez-micro-plan.plan_check.py' \
+    '~/.coder/skills/trunk-refactor/SKILL.md	file:templates/common/trunk-refactor.SKILL.md' \
+    '~/.agents/skills/trunk-refactor/SKILL.md	file:templates/common/trunk-refactor.SKILL.md' \
     '~/.grok/agents/explorer.md	file:templates/common/explorer.AGENT.md' \
     '~/.grok/agents/architect.md	file:templates/common/architect.AGENT.md' \
     '~/.grok/agents/implementer.md	file:templates/common/implementer.AGENT.md' \
@@ -172,12 +186,16 @@ seed_seed_targets() {
     '~/.grok/hooks/bin/secret-guard.sh	exec:templates/common/hooks.secret-guard.sh' \
     '~/.grok/hooks/bin/dangerous-command-guard.sh	exec:templates/common/hooks.dangerous-command-guard.sh' \
     '~/.grok/hooks/bin/post-edit-format.sh	exec:templates/common/hooks.post-edit-format.sh' \
-    '~/.grok/hooks/bin/selective-test-runner.sh	exec:templates/common/hooks.selective-test-runner.sh'
+    '~/.grok/hooks/bin/selective-test-runner.sh	exec:templates/common/hooks.selective-test-runner.sh' \
+    '~/.grok/workflows/debug-fix.js	file:templates/common/debug-fix.workflow.js' \
+    '~/.grok/workflows/fleet-verify.js	file:templates/common/fleet-verify.workflow.js' \
+    '~/.grok/workflows/implement-reviewed.js	file:templates/common/implement-reviewed.workflow.js' \
+    '~/.grok/workflows/open-bugs.js	file:templates/common/open-bugs.workflow.js'
 }
 
 # @function seed_retired_targets
-# Print the targets a rename left behind, one home-relative path per line. A
-# renamed skill does not uninstall itself: the boot contract only ever writes
+# Print the targets a rename or a tier change left behind, one home-relative path per
+# line. A renamed skill does not uninstall itself: the boot contract only ever writes
 # an absent file, so the copy the stack seeded under the old name survives and
 # keeps shadowing whatever the CLI ships under it (a user-scope skill wins over
 # a same-named bundled one). The reseed removes those leftovers; the boot
@@ -194,7 +212,13 @@ seed_retired_targets() {
   # shellcheck disable=SC2088
   printf '%s\n' \
     '~/.coder/skills/learn/SKILL.md' \
-    '~/.agents/skills/learn/SKILL.md'
+    '~/.agents/skills/learn/SKILL.md' \
+    '~/.coder/skills/ez-bazel-first/SKILL.md' \
+    '~/.agents/skills/ez-bazel-first/SKILL.md' \
+    '~/.coder/skills/ez-bazel-first/scripts/owned_files_check.py' \
+    '~/.agents/skills/ez-bazel-first/scripts/owned_files_check.py' \
+    '~/.coder/skills/ez-bazel-first/scripts/glob_budget.py' \
+    '~/.agents/skills/ez-bazel-first/scripts/glob_budget.py'
 }
 
 # @function seed_container_exec

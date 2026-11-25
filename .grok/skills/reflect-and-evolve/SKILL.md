@@ -1,1 +1,1 @@
-../../../skills/reflect-and-evolve/SKILL.md
+../../../templates/common/reflect-and-evolve.SKILL.md

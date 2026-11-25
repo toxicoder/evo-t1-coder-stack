@@ -13,7 +13,8 @@
 #   turned back on, the search backend swapped for a vendor's free tier, a
 #   vendor credential in the container, an unrendered working directory, a
 #   relative one, a STACK_HOST_PATH naming a directory with no compose file, an
-#   off-pin image, the shipped placeholder key, an unset dashboard pair, a
+#   off-pin image, a Webapp listener turned on, the shipped placeholder key, an
+#   unset dashboard pair, a
 #   password equal to its own username, an mcp_servers block the gates never
 #   saw — each has to land as a failure or a warning, with the name of the
 #   thing that drifted in the line.
@@ -34,8 +35,9 @@
 # compose file plus its own hermes/ seed pair), a scratch data directory, a
 # scratch dotenv, and a scratch docker CLI that answers the four questions this
 # audit asks from environment knobs. Nothing reaches a daemon, a socket, or the
-# stack's real hermes/ tree — except the two tests that bless the shipped seed,
-# which point REPO_ROOT at the checkout on purpose.
+# stack's real hermes/ tree -- except the tests that bless the shipped tree:
+# two point REPO_ROOT at the checkout on purpose, and the two pin units read the
+# real docker-compose.yml and scripts/hermes-doctor.sh by path.
 #
 # Usage: bazelisk test //tests:bats_hermes_doctor_test   (from any cwd)
 # Safety: scratch directories only. No Docker, no daemon, no network.
@@ -77,7 +79,7 @@ setup() {
 
   # The checkout the audit resolves. The compose file carries the same pin the
   # stack ships, because check_image_pin compares a live container against it.
-  printf 'services:\n  hermes:\n    image: nousresearch/hermes-agent:v0.22.5\n' >"${CHECKOUT}/docker-compose.yml"
+  printf 'services:\n  hermes:\n    image: nousresearch/hermes-agent:v0.23.2\n' >"${CHECKOUT}/docker-compose.yml"
   printf 'You are the host assistant.\n' >"${CHECKOUT}/hermes/SOUL.md"
   # The coding-agent control plane the assistant is meant to be able to reach. The
   # default world is a healthy one, so a clean bill stays clean; the test that wants
@@ -606,22 +608,22 @@ assert_report_lacks() {
 
 # ── the image pin, the model key, the dashboard door ─────────────────────────
 
-@test "doctor: a container on an off-pin image is a warning naming both tags" {
+@test "doctor: a container on an image newer than the pin is a warning naming both tags" {
   seed_volume
-  export STUB_PS_OUT="cafebabe01" STUB_IMAGE="nousresearch/hermes-agent:v0.23.0"
+  export STUB_PS_OUT="cafebabe01" STUB_IMAGE="nousresearch/hermes-agent:v0.23.3"
   run_doctor --check image-pin
   assert_status 0 "an off-pin container"
   assert_report_has "names what is running and what is pinned" \
-    'running nousresearch/hermes-agent:v0.23.0, this checkout pins nousresearch/hermes-agent:v0.22.5'
+    'running nousresearch/hermes-agent:v0.23.3, this checkout pins nousresearch/hermes-agent:v0.23.2'
   assert_report_has "says why the pair matters" 'the docs and the agent may disagree'
 }
 
 @test "doctor: a container on the pin is clean" {
   seed_volume
-  export STUB_PS_OUT="cafebabe01" STUB_IMAGE="nousresearch/hermes-agent:v0.22.5"
+  export STUB_PS_OUT="cafebabe01" STUB_IMAGE="nousresearch/hermes-agent:v0.23.2"
   run_doctor --check image-pin
   assert_status 0 "an on-pin container"
-  assert_report_has "reports the pin" 'ok: image: nousresearch/hermes-agent:v0.22.5, the pin this checkout names'
+  assert_report_has "reports the pin" 'ok: image: nousresearch/hermes-agent:v0.23.2, the pin this checkout names'
 }
 
 @test "doctor: no container running leaves the pin as the only fact" {
@@ -687,6 +689,46 @@ assert_report_lacks() {
   run_doctor --check dashboard
   assert_status 0 "a public URL on http"
   assert_report_has "names the router's https" 'public URL is plain http'
+}
+
+
+@test "doctor: the shipped seed keeps the Webapp door shut" {
+  seed_volume
+  run_doctor --check webapp-door
+  assert_status 0 "the shipped state"
+  assert_report_has "reports one listener behind basic auth" \
+    'ok: webapp door: closed, so the gateway has one listener'
+}
+
+@test "doctor: a Webapp turned on in the seed is a failure naming the door" {
+  printf 'webapp:\n  enabled: true\n' >>"${CHECKOUT}/hermes/config.yaml"
+  run_doctor --check webapp-door
+  assert_status 1 "a seed that opens the Webapp listener"
+  assert_report_has "names the second door basic auth does not cover" \
+    'error: webapp is enabled .*second door no basic auth covers'
+}
+
+@test "doctor: a Webapp opened inside the volume is read where the container reads it" {
+  seed_volume
+  printf 'webapp:\n  enabled: true\n' >>"${VOL}/config.yaml"
+  run_doctor --check webapp-door
+  assert_status 1 "the volume copy the container loads"
+  assert_report_has "names the file it read" 'webapp is enabled \(.*volume.*/config.yaml\)'
+}
+
+@test "doctor: a Webapp the container was created with is refused too" {
+  container_env "HERMES_WEBAPP_ENABLED=1"
+  run_doctor --check webapp-door
+  assert_status 1 "an env override compose never set"
+  assert_report_has "names the environment as the source" \
+    'webapp is enabled \(the environment it was created with\)'
+}
+
+@test "doctor: an override that leaves the Webapp off is the shipped state" {
+  container_env "WEBAPP_ENABLED=false"
+  run_doctor --check webapp-door
+  assert_status 0 "an override that keeps it off"
+  assert_report_has "reports the door closed" 'ok: webapp door: closed'
 }
 
 # ── the volume against the seed ──────────────────────────────────────────────
@@ -926,19 +968,19 @@ assert_report_lacks() {
 }
 
 @test "doctor: --container addresses the name it is given" {
-  export STUB_PS_OUT="cafebabe01" STUB_IMAGE="nousresearch/hermes-agent:v0.22.5"
+  export STUB_PS_OUT="cafebabe01" STUB_IMAGE="nousresearch/hermes-agent:v0.23.2"
   run_doctor --container hermes-by-hand --check image-pin
   assert_status 0 "a named container"
   assert_match "inspected that container and no other" '^docker inspect .* hermes-by-hand$' "$(stub_log docker)"
-  assert_report_has "reported the image it was given" 'ok: image: nousresearch/hermes-agent:v0.22.5'
+  assert_report_has "reported the image it was given" 'ok: image: nousresearch/hermes-agent:v0.23.2'
 }
 
 @test "doctor: the label lookup finds the service container when compose says nothing" {
-  export STUB_PS_NAMES="evo-t1-prod-hermes-1" STUB_IMAGE="nousresearch/hermes-agent:v0.22.5"
+  export STUB_PS_NAMES="evo-t1-prod-hermes-1" STUB_IMAGE="nousresearch/hermes-agent:v0.23.2"
   run_doctor --check image-pin
   assert_status 0 "the label fallback"
   assert_match "resolved through docker ps" '^docker ps --format' "$(stub_log docker)"
-  assert_report_has "reported the image" 'ok: image: nousresearch/hermes-agent:v0.22.5'
+  assert_report_has "reported the image" 'ok: image: nousresearch/hermes-agent:v0.23.2'
 }
 
 @test "doctor: no checkout to audit is exit 5" {
@@ -981,7 +1023,7 @@ load_cli_fn() {
   DRY_RUN=0
   ROOT="${CHECKOUT}"
   DOCTOR_CONTAINER_CACHE=""
-  HERMES_IMAGE_DEFAULT="nousresearch/hermes-agent:v0.22.5"
+  HERMES_IMAGE_DEFAULT="nousresearch/hermes-agent:v0.23.2"
   WEB_VENDOR_KEYS="TAVILY_API_KEY FIRECRAWL_API_KEY BRAVE_SEARCH_API_KEY EXA_API_KEY PARALLEL_API_KEY KEENABLE_API_KEY PERPLEXITY_API_KEY"
   SUMMARY_OK=0
   SUMMARY_WARN=0
@@ -1074,16 +1116,78 @@ load_cli_fn() {
 
 @test "doctor_pinned_image: reads the assistant's own image and no other service's" {
   load_cli_fn doctor_pinned_image || fail "could not load doctor_pinned_image"
-  printf 'services:\n  db:\n    image: postgres:17\n  hermes:\n    image: nousresearch/hermes-agent:v0.22.5\n  litellm:\n    image: ghcr.io/berriai/litellm:v1.102.1\n' \
+  printf 'services:\n  db:\n    image: postgres:17\n  hermes:\n    image: nousresearch/hermes-agent:v0.23.2\n  litellm:\n    image: ghcr.io/berriai/litellm:v1.102.1\n' \
     >"${CHECKOUT}/docker-compose.yml"
   assert_eq "the assistant's image, not postgres or litellm" \
-    "nousresearch/hermes-agent:v0.22.5" "$(doctor_pinned_image)"
+    "nousresearch/hermes-agent:v0.23.2" "$(doctor_pinned_image)"
 }
 
 @test "doctor_pinned_image: a compose file naming no image falls back to the shipped pin" {
   load_cli_fn doctor_pinned_image || fail "could not load doctor_pinned_image"
   printf 'services:\n  coder:\n    image: coder/coder:v2.36.0\n' >"${CHECKOUT}/docker-compose.yml"
-  assert_eq "the pin this repo ships" "nousresearch/hermes-agent:v0.22.5" "$(doctor_pinned_image)"
+  assert_eq "the pin this repo ships" "nousresearch/hermes-agent:v0.23.2" "$(doctor_pinned_image)"
+}
+
+# -- the pin, read off the tree rather than off a fixture ---------------------
+#
+# Every pin above is compared against a value this suite wrote itself: the
+# compose line in setup(), the fallback load_cli_fn assigns, or a printf in the
+# test. A tag that is wrong in docker-compose.yml and in scripts/hermes-doctor.sh
+# in the same way passes all of them. These two units state the tag once, as a
+# literal, and hold every real source of it to that literal.
+
+@test "pin: the real compose file tags both assistant services with the literal" {
+  local compose="${CANONICAL_ROOT}/docker-compose.yml"
+  local want="nousresearch/hermes-agent:v0.23.2"
+  local svc got tagged
+  [ -f "${compose}" ] || fail "docker-compose.yml is not in this suite's runfiles"
+  for svc in hermes-init hermes; do
+    got="$(awk -v svc="  ${svc}:" '
+      $0 == svc { inblk = 1; next }
+      inblk && /^  [A-Za-z0-9_-]+:/ { exit }
+      inblk && /^[[:space:]]+image:/ { print $2; exit }
+    ' "${compose}")"
+    [ "${got}" = "${want}" ] || {
+      echo "${svc}: image is '${got:-none}', this stack ships ${want}" >&2
+      return 1
+    }
+  done
+  # Only those two entries may carry the tag: a third service on a stale tag
+  # boots an assistant nobody audited, and a missing one drops the initializer.
+  tagged="$(grep -c "^[[:space:]]*image: ${want}\$" "${compose}" || true)"
+  [ "${tagged}" = "2" ] || {
+    echo "${compose}: ${tagged} image lines carry ${want}, expected exactly two" >&2
+    return 1
+  }
+}
+
+@test "pin: hermes-doctor.sh's expected version is that same literal" {
+  local compose="${CANONICAL_ROOT}/docker-compose.yml"
+  local want="nousresearch/hermes-agent:v0.23.2"
+  local shipped live
+  # The fallback the audit calls the pin when compose is unreadable. load_cli_fn
+  # overrides this global with a fixture value, so read the shipped bytes.
+  shipped="$(grep -oE '^HERMES_IMAGE_DEFAULT="[^"]+"' "${SCRIPT}" |
+    head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')"
+  [ "${shipped}" = "${want}" ] || {
+    echo "${SCRIPT}: HERMES_IMAGE_DEFAULT is '${shipped:-none}', this stack ships ${want}" >&2
+    return 1
+  }
+  # The parser the audit actually runs, pointed at the real compose file rather
+  # than at the scratch one setup() writes.
+  load_cli_fn doctor_pinned_image || fail "could not load doctor_pinned_image"
+  COMPOSE_FILE="${compose}"
+  live="$(doctor_pinned_image)"
+  [ "${live}" = "${want}" ] || {
+    echo "${compose}: doctor_pinned_image reads '${live}', this stack ships ${want}" >&2
+    return 1
+  }
+  # And the fixture every other unit in this file is driven on: a pin that only
+  # the suite still believes in would let those units pass against nothing.
+  [ "${HERMES_IMAGE_DEFAULT}" = "${want}" ] || {
+    echo "this suite's fixture pin '${HERMES_IMAGE_DEFAULT}' drifted from ${want}" >&2
+    return 1
+  }
 }
 
 @test "doctor_same_file: the render is forgiven and a flipped switch is not" {
@@ -1111,10 +1215,11 @@ load_cli_fn() {
   seed_volume
   container_env "SEARXNG_URL=http://searxng:8181" "LITELLM_MASTER_KEY=real-model-key-value" \
     "HERMES_WRITE_SAFE_ROOT=/opt/data"
-  export STUB_PS_OUT="cafebabe01" STUB_IMAGE="nousresearch/hermes-agent:v0.22.5"
+  export STUB_PS_OUT="cafebabe01" STUB_IMAGE="nousresearch/hermes-agent:v0.23.2"
   load_cli_fn check_approvals check_terminal_cwd check_write_root check_web_lane \
     check_keyless_egress check_mcp_servers check_seed_drift check_mount_identity \
-    check_image_pin check_model_key check_dashboard check_memories \
+    check_image_pin check_model_key check_dashboard check_webapp_door \
+    check_memories \
     check_anywhere_door check_agent_verbs \
     doctor_compose doctor_container doctor_container_running doctor_env_of \
     doctor_volume_dir doctor_pinned_image doctor_same_file || \
@@ -1129,9 +1234,10 @@ load_cli_fn() {
     'check_mcp_servers|^ok: mcp_servers: none declared' \
     'check_seed_drift|^ok: seed drift: the volume copy matches' \
     'check_mount_identity|^ok: STACK_HOST_PATH: ' \
-    'check_image_pin|^ok: image: nousresearch/hermes-agent:v0.22.5' \
+    'check_image_pin|^ok: image: nousresearch/hermes-agent:v0.23.2' \
     'check_model_key|^ok: model key: LITELLM_MASTER_KEY is set' \
     'check_dashboard|^ok: dashboard: basic auth is set' \
+    'check_webapp_door|^ok: webapp door: closed' \
     'check_anywhere_door|^ok: api server: closed' \
     'check_agent_verbs|^ok: agent verbs: scripts/coder-sessions[.]sh is on the checkout' \
     'check_memories|^note: memories: no SQLite store yet'; do

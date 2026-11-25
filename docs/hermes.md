@@ -77,8 +77,11 @@ Related:
   `HERMES_DASHBOARD_PASSWORD`. Bootstrap generates the password; it is **not** the
   Homepage password, and `bazelisk run //scripts:dashboard-password` does not rotate it.
 
-  That basic auth stays on every door. Hermes v0.22.5 refuses to bind `0.0.0.0` with no
-  provider.
+  That basic auth stays on every door. Hermes refuses to bind `0.0.0.0` with no
+  provider (measured at v0.22.5; the release notes through v0.23.2 record no change
+  to it). v0.23.0 added a second door - the Webapp, which serves the Desktop
+  workspace from the gateway on its own listener - and it stays shut here:
+  `webapp.enabled` is off by default and nothing in this stack sets it.
 
   On the public URL Authelia challenges first and basic auth challenges second; two
   logins are expected. LAN `:9119`, and LAN `:8080` with this name's Host header, never
@@ -315,13 +318,16 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
 
 ### The check names, and the exit codes
 
-- **The fourteen checks:**
+- **The fifteen checks:**
 
   - `approvals` (manual, with cron and unattended both deny)
   - `terminal-cwd`, `write-root`, `web-lane`, `keyless-egress`, `mcp-servers`,
     `seed-drift`, `mount-identity`, `image-pin`, `model-key`, `dashboard`, `memories`
   - `anywhere-door` (the API server's enabled/keyed/bound state and whether the push
     channel can be answered by strangers)
+  - `webapp-door` (whether the v0.23.0 Webapp listener is switched on in the seed, in
+    the volume copy, or in the container env; it is off, and the dashboard basic-auth
+    triple does not cover that door)
   - `agent-verbs` (whether the assistant can still reach `scripts/coder-sessions.sh`
     and the socket those verbs read)
 

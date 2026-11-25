@@ -1,0 +1,65 @@
+#!/bin/sh
+# tftpl: coder_script body; the timezone probe is interpolated from the map main.tf
+# passes, into a quoted here-doc so no shell text inside it is expanded, which is what
+# keeps the probe's own dollar signs out of the render.
+# Why the clock rides a body of its own rather than startup.sh.tftpl: the agent execs
+# every body as ONE argument to execve(2), Linux caps one argument at 131072 bytes, and
+# the startup argument is the one that runs out.
+# docs/coder-templates.md#the-one-argument-ceiling.
+set -u
+
+# The verbs arrive as a map value and Terraform does not re-interpolate one, so the
+# library's own dollar-brace text lands verbatim - spelled that way here because
+# Terraform reads a real one anywhere in this file, comments included.
+${boot_log_lib}
+
+boot_begin "host timezone" 1
+boot_stage 1 "the host zone on /etc and in the agent environment"
+
+SUDO=""
+if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo"
+fi
+
+# --- Host timezone ------------------------------------------------------------
+# The image ships one default zone and the host runs in another, so a container that
+# inherits nothing prints a time its host does not: date, the agent's terminals, and
+# the agent process all read the localtime link. templates/common/tz.sh answers one
+# IANA name - the TZ the agent env injects, then the timezone file, then the localtime
+# link - and this applies it: /etc/timezone, the localtime link, and the agent's own
+# TZ. It lands in a coder_script of its own rather than in another paragraph of
+# startup.sh.tftpl because that argument is the one execve that runs out of room
+# (docs/coder-templates.md#the-one-argument-ceiling), and Coder starts every
+# run_on_start body in one concurrent errgroup and marks the workspace ready only once
+# all of them have returned - so the clock is settled before the workspace is ready.
+# It never fails the boot: no tzdata, or an /etc this user cannot write, is one warning
+# line, because every boot body shares one 1 MiB agent log. The three paths come from
+# the environment so tests/bats/workspace-tz.bats can aim them at a scratch tree.
+TZ_ZONEINFO_DIR="$${TZ_ZONEINFO_DIR:-/usr/share/zoneinfo}"
+TZ_TIMEZONE_FILE="$${TZ_TIMEZONE_FILE:-/etc/timezone}"
+TZ_LOCALTIME_LINK="$${TZ_LOCALTIME_LINK:-/etc/localtime}"
+tz_probe_tmp="$(mktemp 2>/dev/null)" || tz_probe_tmp="/tmp/evo-t1-tz-probe.$$"
+if cat >"$tz_probe_tmp" <<'TZ_PROBE_EOF'
+${tz_probe}
+TZ_PROBE_EOF
+then
+  tz_zone="$(sh "$tz_probe_tmp" "$TZ_ZONEINFO_DIR" "$TZ_TIMEZONE_FILE" "$TZ_LOCALTIME_LINK" 2>/dev/null |
+    tr -d ' \t\r\n')"
+  tz_reason=""
+  if [ -n "$tz_zone" ] && [ -f "$TZ_ZONEINFO_DIR/$tz_zone" ]; then
+    printf '%s\n' "$tz_zone" | $SUDO tee "$TZ_TIMEZONE_FILE" >/dev/null 2>&1 || true
+    $SUDO ln -sf "$TZ_ZONEINFO_DIR/$tz_zone" "$TZ_LOCALTIME_LINK" 2>/dev/null || true
+    export TZ="$tz_zone"
+    [ "$(cat "$TZ_TIMEZONE_FILE" 2>/dev/null)" = "$tz_zone" ] ||
+      tz_reason="$tz_zone is not writable at $TZ_TIMEZONE_FILE, so date still reads the image default while the agent's own TZ answers in it"
+  else
+    tz_reason="'$tz_zone' names no zone under $TZ_ZONEINFO_DIR - install tzdata or set TZ on the coder_agent env"
+  fi
+  if [ -z "$tz_reason" ]; then
+    boot_ok "the host timezone applied: $tz_zone - date now reads $(date '+%Y-%m-%d %H:%M %Z')"
+  else
+    boot_warn "no host timezone applied: $tz_reason"
+  fi
+fi
+rm -f "$tz_probe_tmp" 2>/dev/null || true
+boot_summary

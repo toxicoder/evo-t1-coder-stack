@@ -340,13 +340,6 @@ commands spelled out.
 
 ### Per-repository notes
 
-- **`toxicoder/evo-t1-coder-stack`** (trunk `main`): Bazelisk is the ingress and the gate
-  (`bazelisk test //:test-fast`, `//:lint`, `//:validate`). Environments are already dev versus
-  stable stacks chosen by compose project name, dotenv file and subdomain parts, driven by
-  `//scripts:dev-stack`, `//scripts:prod-stack` and `//scripts:update-stack`. `docs/branching.md`
-  already forbids environment branches, yet `dev`, `development`, `staging`, `uat` and `prod`
-  were still on the remote, every one of them `ahead=0` against `main`: a Phase 4 deletion list,
-  not a Phase 2 problem. A new flag that reaches a workspace also needs both template twins.
 - **`toxicoder/nvidia-dgx-spark-lab`** (trunk `main`, `development` 134 ahead / 27 behind):
   Bazel plus Ansible (`ansible/ansible.cfg`), Helm (`helm/lab-dashboard/values.yaml`) and
   Kustomize (`k8s/base`, `k8s/dev`, `k8s/monitoring`, `k8s/cert-manager`), with Compose for the

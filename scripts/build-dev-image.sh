@@ -114,6 +114,26 @@ done < <(grep -oE '^[A-Z0-9_]+=' "${VERSIONS}" | tr -d '=')
 
 [ "${#args[@]}" -gt 0 ] || die "no version pins found in ${VERSIONS}"
 
+# -- Forward the optional-extension flag -------------------------------------
+# GH_STACK_ENABLED is a build-time choice rather than a version pin, so it does
+# not live in tool-versions.env and the loop above (which must stay the pins'
+# single source of truth) can never reach it. Read it from the real process
+# environment and forward it explicitly, so the interface is:
+#   GH_STACK_ENABLED=true bazelisk run //scripts:build-dev-image
+# The Dockerfile guard compares against the literal "true", so normalise the
+# same way here: only an exact "true" turns the layer on and anything else
+# (unset, empty, True, 1, a typo) forwards false, so the flag cannot turn on by
+# accident. The off path prints nothing: an off-by-default flag owes a normal
+# build no noise.
+gh_stack_enabled=false
+if [[ ${GH_STACK_ENABLED:-} == "true" ]]; then
+  gh_stack_enabled=true
+fi
+args+=("--build-arg" "GH_STACK_ENABLED=${gh_stack_enabled}")
+if [[ ${gh_stack_enabled} == "true" ]]; then
+  note "gh-stack: installing the github/gh-stack gh extension pinned to ${GH_STACK_VERSION:-unpinned}"
+fi
+
 # ── Build ────────────────────────────────────────────────────────────────────
 # No --network=host: every fetch here goes to a public HTTPS host by name and the
 # LAN resolver handles it. Host networking would also let the build see the host's

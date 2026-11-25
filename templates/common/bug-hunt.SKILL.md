@@ -65,8 +65,40 @@ exact output. For an issue, read the body and the comments before theorising:
 
 ### Quote their acceptance text back
 
+Read the issue before you plan, not after you have a fix to defend: the body and the comments
+ARE the requirements -- the reproduction, the acceptance wording, the definition of fixed.
 Quote their acceptance text back when you report done; that text, not your paraphrase, is
 what the fix must satisfy. Note the environment and what changed since it last worked.
+
+## Step 0a -- search the tracker before you fix an unnumbered defect (2 calls)
+
+### Search open, then closed
+
+A defect nobody numbered is not yet a licence to write a fix. Search the tracker twice, open
+first and closed second, so a report `main` already fixed and one somebody else filed last
+month both surface. Use the symptom's own words -- the error string, the command, the file:
+
+    env -u GH_TOKEN -u GITHUB_TOKEN gh issue list --state open --search '<keywords> in:title,body'
+    env -u GH_TOKEN -u GITHUB_TOKEN gh issue list --state closed --search '<keywords> in:title,body'
+
+### Three outcomes, not one
+
+- `main` already fixed it: post a comment naming the commit that fixed it, and stop there.
+- a duplicate of an open report: link the original and work there; do not file a second one.
+- genuinely new: file it, then read it as your Step 0 report.
+
+### Say so before a long fix
+
+Anything past an obvious edit, post what you intend to change before you change it, so a human
+can redirect you early and nobody else starts the same work. Body from a file, never argv:
+
+    env -u GH_TOKEN -u GITHUB_TOKEN gh issue comment <n> --body-file <path>
+
+### Every gh call carries the prefix
+
+`GH_TOKEN`/`GITHUB_TOKEN` are the pair the environment started with; it expires about an hour
+later and nothing can rewrite another process's environment, while the gh auth store beside it
+stays healthy and is never asked. Hence the prefix on every `gh` call, including these.
 
 ## Step 1 -- reproduce it, or stop (mandatory, 2 to 4 calls)
 
@@ -154,3 +186,65 @@ When you cannot fix it, report the localisation instead:
 - the line
 - the evidence
 - what to try next
+
+## Step 5a -- write back to the issue (2 calls)
+
+### The number, the branch, and the keyword
+
+A bug fix branches as `fix/<n>-<slug>` off the tip of the trunk. The closing keyword lives in
+the pull request body and nowhere else on the branch:
+
+- `Closes #<n>` / `Fixes #<n>` only when this pull request fully settles the report
+- `Refs #<n>` when it is one of several, or lands before the fix
+- never repeat `Fixes #<n>` down the branch -- GitHub links every commit subject that carries
+  one, so repeating it multiplies a single link and blurs which commit answers the report
+
+### Post the reproduction, the verdict, and the branch
+
+Write the body to a file and give `gh` the path; never put the body in argv, where one quoting
+mistake mangles the report:
+
+    env -u GH_TOKEN -u GITHUB_TOKEN gh issue comment <n> --body-file <path>
+
+Post the reproduction output verbatim, the verdict, and the branch name. "Cannot reproduce" is
+a finding to post with what you ran and what you actually saw, not a fix -- the report stays
+open either way.
+
+### Make the association an artifact, not a sentence
+
+The link between the bug and the fix is a file you write and a path you record, so it survives
+the session. Write the pull-request body to a path outside the repository, name that path in
+the issue comment beside the branch and the tip sha (`git rev-parse <branch>`, not the sha you
+remembered), and read the number back if a pull request already exists for the branch:
+
+    env -u GH_TOKEN -u GITHUB_TOKEN gh pr list --head <branch> --state all --json number,url,state
+
+Post that number onto the issue as a comment from a file. A comment that names the pull request
+is the cross-reference; nothing in this step closes, reopens, or relabels the issue.
+
+### The push and the open are the operator's, so hand over a checklist
+
+Never push or open the pull request on your own. Hand the operator the two commands, with the
+body file already in the second one, and say plainly that you skipped both:
+
+    git push -u origin fix/<n>-<slug>
+    env -u GH_TOKEN -u GITHUB_TOKEN gh pr create --head fix/<n>-<slug> --body-file <path>
+
+The checklist they run: open the body file, fill the two lines it asks for, check the keyword
+line is the one the evidence earns, run both commands, then read the new number back onto the
+issue. Only a run the operator explicitly asked to ship may run those two itself, and then it
+reports whether the push really happened.
+
+### You are not the maintainer
+
+Never close, reopen, reassign, label, or milestone someone else's issue, and never answer a
+question in it that belongs to the operator; draft that reply for them instead. The merge that
+closes an issue is a human action -- your closing keyword only takes effect there.
+
+### The one auth stop rule
+
+    bazelisk run //scripts:github-auth -- check <repo-url>
+
+Its last line is the verdict. A line beginning `HANDOFF` means a human owes three clicks in the
+Coder UI: pass that on and stop. Do not try workarounds -- no hand-rolled `GIT_ASKPASS`, no
+hand-written credential helper, no interactive login, no ssh remote.

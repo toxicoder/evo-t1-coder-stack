@@ -72,6 +72,18 @@ lift_python_merge() {
   printf '%s' "${unfolded}" | python3 -c 'import json,sys; json.load(sys.stdin)'
 }
 
+@test "settings: shell-integration decorations are off, because tmux swallows their marks" {
+  local seed="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
+  # The decorations are drawn from OSC 133 "command started / finished" marks, and an
+  # unwrapped OSC reaches no tmux client under any allow-passthrough value (measured in
+  # the tmux seed's own reasoning): tmux drops them on the floor. So for the default
+  # tmux profile xterm.js pays the per-line decoration pass to render nothing. The key
+  # is global in VS Code, which is the honest trade here: a plain shell loses a gutter
+  # marker, the tmux profile that every workspace opens by default stops repainting.
+  assert_contains_file "no decoration pass for marks that never arrive" "${seed}" \
+    '"terminal.integrated.shellIntegration.decorationsEnabled": "none"'
+}
+
 @test "settings: no desktop paths, personal words, or API key in the seed" {
   local seed="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
   local banned

@@ -208,6 +208,12 @@ _SUITE_PAYLOAD = {
     "branch-hygiene.bats": [
         "//docs:content",
     ],
+    # The suite stubs `docker` and drives scripts/build-dev-image.sh end to end, then
+    # reads the pins file and the Dockerfile the forwarded --build-arg has to match.
+    # Both are the build context; the script itself arrives with _BATS_COMMON.
+    "build-dev-image.bats": [
+        "//images/dev:context",
+    ],
     # The suite sources the shipped probe and drives both of its functions, so it
     # owes the group that carries the lint runners and their shared host-tool probe.
     "check-tool.bats": [
@@ -240,6 +246,10 @@ _SUITE_PAYLOAD = {
     "contributor-devcontainer.bats": [
         "//:devcontainer",
         "//:githooks",
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//images/dev:context",
     ],
     "dashboard-password.bats": [],
@@ -293,10 +303,18 @@ _SUITE_PAYLOAD = {
         "//docs:content",
     ],
     "grok-subagent-slots.bats": [
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
         "//:entry_docs",
         "//docs:content",
     ],
+    # The suite drives the mint itself against one private docker stub, and opens
+    # nothing beyond the common set: the compose file the CLI names to derive the
+    # project network is already every suite's data.
+    "grafana-agent-token.bats": [],
     "github-auth.bats": [],
     "hermes-bootstrap.bats": [
         "//hermes:seed",
@@ -373,6 +391,11 @@ _SUITE_PAYLOAD = {
     "host-state.bats": [
         "//homepage:icons",
     ],
+    # It drives the one POSIX probe at scripts/lib/probes/host_gpu.sh against a scratch
+    # sysfs tree and reads docker-compose.yml only to prove that probe's mount exists.
+    # Both arrive with _BATS_COMMON, which carries //:compose_file and
+    # //scripts:doc_sources, so the probe needs no group of its own.
+    "host_gpu.bats": [],
     "image.bats": [
         "//images/dev:context",
     ],
@@ -408,6 +431,10 @@ _SUITE_PAYLOAD = {
     # SKILL.md payloads and the four python helpers all arrive with the
     # template payload, and the suite reads scripts/lib/ through _BATS_COMMON.
     "ez-repo-skill-authoring.bats": [
+        # The trunk-refactor row of GLOBAL_TARGETS below: the suite builds the
+        # home-relative pair from it and opens the payload the matching row of
+        # GLOBAL_PAYLOADS names, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     "litellm-config.bats": [
@@ -470,6 +497,16 @@ _SUITE_PAYLOAD = {
         # auth: the refused switch is absent from that file, so the file has to be in
         # the runfiles or the case can only ever report its own absence.
         "//litellm:config",
+        # The suite compares the gauge names in the Arc host GPU card against the names
+        # the probe emits, which needs the card file itself in the runfiles.
+        "//homepage:config",
+    ],
+    # The suite drives the query CLI, so that script's reads are this suite's reads:
+    # the provisioned datasources and dashboards every answer names, and the proxy/
+    # token its asserted URLs raise.
+    "observability-query.bats": [
+        "//observability:payload",
+        "//proxy:confs",
     ],
     # Every fact here is read out of the provisioned dashboard tree, and the metric
     # allow-list reads the recording rules this repo ships so a new rule never needs
@@ -501,12 +538,20 @@ _SUITE_PAYLOAD = {
     ],
     "py_helpers.bats": [],
     "refresh-configs.bats": [
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     "run-npm.bats": [],
     "search-check.bats": [],
     "seed-dev-env.bats": [
         "//:devcontainer",
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     # The CLI half runs against the docker stub and a fixture tree; the twin half reads
@@ -519,7 +564,12 @@ _SUITE_PAYLOAD = {
         "//images/dev:tool_versions",
     ],
     "spark-configure.bats": [],
-    "spark-verify.bats": [],
+    # Nothing beyond _BATS_COMMON except the docs tree: the DOWN-verdict assertions quote
+    # the routing page the CLI cites as the source of the health-filter claim, and the
+    # source scan reads that citation in an assertion string as a read.
+    "spark-verify.bats": [
+        "//docs:content",
+    ],
     "stack-data.bats": [],
     # The guard family is five payload files plus the manifest, and the suite drives
     # each script by piping an event at it, so the payloads are the suite's whole
@@ -527,6 +577,10 @@ _SUITE_PAYLOAD = {
     "stack-hooks.bats": [
         "//:stack_data",
     ],
+    # The suite drives the CLI against a stubbed `gh`, and both the entry script and its
+    # library ride //scripts:doc_sources in the common set. No payload file is opened:
+    # every answer comes from the stubbed stacks API.
+    "stack-prs.bats": [],
     # The advisor family's gate: the five skills, the one role definition, the two
     # main.tf twins that feed them, and the seed manifest that names their homes.
     "stack-advisors.bats": [
@@ -538,6 +592,13 @@ _SUITE_PAYLOAD = {
         "//:stack_data",
     ],
     "agent-workflows.bats": [
+        "//:stack_data",
+    ],
+    # The completeness gate for the workflow family, and it reads the family from both ends
+    # at once: the canonical bodies and the seed body under templates/common, both main.tf
+    # twins, and the repo-tier links under .grok/workflows that carry the same bytes to this
+    # checkout's CLI. Only //:stack_data ships the payload tree and the .grok tier together.
+    "stack-workflows.bats": [
         "//:stack_data",
     ],
     # The suite reads both twins and every payload main.tf inlines into them, which
@@ -570,6 +631,10 @@ _SUITE_PAYLOAD = {
         "//docs:content",
     ],
     "storage-clean.bats": [
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     "test-in-image.bats": [
@@ -624,12 +689,19 @@ _SUITE_PAYLOAD = {
         "//:agent_rules",
         "//:flags_example",
         "//:skill_sources",
+        # The canonical body moved to templates/common/trunk-refactor.SKILL.md,
+        # which this suite opens and pins the .grok/ link against.
+        "//:templates_payload",
         "//docs-site:sources",
         "//docs:content",
     ],
     "update-configs.bats": [
         "//:env_example",
         "//:env_sample",
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     "update-stack.bats": [
@@ -651,8 +723,20 @@ _SUITE_PAYLOAD = {
     "workspace-notes.bats": [
         "//:templates_payload",
     ],
+    "workspace-tz.bats": [
+        "//templates/common:payload",
+        "//templates/devcontainer:payload",
+        "//templates/workspace:payload",
+        # The suite reads both dotenv samples as data: the shipped TZ line has to be
+        # commented, and an uncommented empty value is the defect the suite pins.
+        "//:env_example",
+        "//:env_sample",
+    ],
     "workspace.bats": [
         "//:devcontainer",
+        # The suite renders the clone stage out of the startup template and executes it
+        # against a logging git stub, so it reads both twins, not just the container tree.
+        "//:templates_payload",
     ],
 }
 

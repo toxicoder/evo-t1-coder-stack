@@ -6,7 +6,8 @@
 # names (four guard scripts and the deny-patterns list they share). Why it rides a body of
 # its own rather than stack-skills.sh.tftpl or stack-fleet.sh.tftpl: the agent execs every
 # body as ONE argument to execve(2), Linux caps one argument at 131072 bytes, and this body
-# inlines six payloads on top of the three families already at their own ceiling;
+# inlines six payloads on top of the four seed families already at their own ceiling in
+# this body's twin (stack-skills, stack-repo-skills, trunk-refactor-seed, stack-fleet);
 # docs/coder-templates.md#the-one-argument-ceiling.
 set -u
 ${boot_log_lib}

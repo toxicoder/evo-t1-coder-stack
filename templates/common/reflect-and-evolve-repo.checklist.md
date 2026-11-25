@@ -27,10 +27,14 @@ For the agent system that wraps it, use `skills/reflect-and-evolve/references/ch
 
 - The ranked session table, and the only sanctioned way into `~/.grok/sessions/`:
 
-      python3 skills/reflect-and-evolve/scripts/session_signals.py \
+      python3 templates/common/reflect-and-evolve.session_signals.py \
         [--home DIR] [--repo PATH] [--limit N] [--since DAYS] [--json]
 
   Defaults: `--home` is `$GROK_HOME` else `~/.grok`, `--repo` the cwd, `--limit` 20, `--since` 90.
+  That path is the canonical source this page ships with; `coder_script.stack_skills` lays the
+  managed copy of the same program at `~/.agents/skills/reflect-and-evolve/scripts/session_signals.py`
+  for a session that is reading it out of its home instead of out of a clone. It is one program
+  shared with `/reflect-and-evolve`, never a second copy under this skill's own name.
   It reads the store's summary documents and prints counts and titles; nothing in this page authorizes reading a transcript.
 
 ### The gate baseline, the operator CLIs, and the Bazel graph
@@ -77,7 +81,7 @@ The top row is a candidate, not a verdict.
   `git log --since=30.days --name-only --pretty=format: | grep -v '^$' | sort | uniq -c | sort -rn | head -10`. Discount the
   registries everyone must touch (`tests/BUILD.bazel`, a barrel, a render) and read what is left.
 - A repeated user correction about a convention outweighs any count, so count the repeats off the `title` each `--json` row carries:
-  `python3 skills/reflect-and-evolve/scripts/session_signals.py --repo . --json --limit 30 >
+  `python3 templates/common/reflect-and-evolve.session_signals.py --repo . --json --limit 30 >
   /tmp/reflect-and-evolve-repo/signals.json` then
   `grep -o '"title": "[^"]*"' /tmp/reflect-and-evolve-repo/signals.json | sort | uniq -c | sort -rn | head -10`
 

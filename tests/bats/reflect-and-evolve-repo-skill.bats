@@ -5,10 +5,13 @@
 # linked, distinct from its sibling, and runnable.
 #
 # The repo ships a second reflection procedure beside the one that improves the agent
-# system: skills/reflect-and-evolve-repo/SKILL.md is the canonical body for improving the
-# repository itself, .grok/skills/reflect-and-evolve-repo/SKILL.md is the symlink that makes
-# it a repo-tier skill the CLI discovers, references/checklist.md is the evidence-and-quality
-# page the body hands the reader, and docs/grok-build-and-agents.md is the roster entry that
+# system: templates/common/reflect-and-evolve-repo.SKILL.md is the canonical body for
+# improving the repository itself, .grok/skills/reflect-and-evolve-repo/SKILL.md is the
+# tracked symlink that makes it a repo-tier skill the CLI discovers,
+# templates/common/reflect-and-evolve-repo.checklist.md is the evidence-and-quality page the
+# body hands the reader (seeded at
+# ~/.coder/skills/reflect-and-evolve-repo/references/checklist.md), and
+# docs/grok-build-and-agents.md is the roster entry that
 # tells a person the command exists. Its sweeper is the sibling's, shared and never forked.
 #
 # Each of those fails in a way nothing else notices. A truncated paste loses a Core Workflow
@@ -36,8 +39,8 @@
 #         the lint runner over this file (shellcheck -x, exit 0), and the same file with its
 #         @test headers turned into function headers:
 #         sed -E 's/^@test "[^"]*" \{/f_n() {/' <file> | bash -n -
-# Safety: reads skills/reflect-and-evolve-repo/SKILL.md and its references page, the .grok/
-#         link, the sibling body it must stay distinct from, the one sweeper both share, and
+# Safety: reads templates/common/reflect-and-evolve-repo.SKILL.md and its checklist page, the
+#         .grok/ link, the sibling body it must stay distinct from, the one sweeper both share, and
 #         the docs page; writes only per-test scratch under BATS_TEST_TMPDIR. Never touches a
 #         real ~/.grok session store: run_sweeper refuses a --home outside that scratch.
 
@@ -58,11 +61,16 @@ DOC_PAGE=""
 # cite it.
 DOC_PATH="docs/grok-build-and-agents.md"
 
-# The two pages the body's References section has to name, spelled as the contract pins them,
-# and the repo-relative form the gate greps for. The sweeper belongs to the sibling skill:
-# both skills read it and neither owns a copy.
-CHECKLIST_PATH="skills/reflect-and-evolve-repo/references/checklist.md"
-SWEEPER_PATH="skills/reflect-and-evolve/scripts/session_signals.py"
+# The two pages the body's References section has to name, spelled the way the contract pins
+# them (under the skill's own home, where the seed lays them), and the tracked source each one
+# ships from under templates/common/. The sweeper belongs to the sibling skill: both skills
+# read it and neither owns a copy, so its tracked source sits under the sibling's own name.
+CHECKLIST_REF='~/.agents/skills/reflect-and-evolve-repo/references/checklist.md'
+SWEEPER_REF='~/.agents/skills/reflect-and-evolve/scripts/session_signals.py'
+CHECKLIST_PATH="templates/common/reflect-and-evolve-repo.checklist.md"
+SWEEPER_PATH="templates/common/reflect-and-evolve.session_signals.py"
+# The stack seed is what lays both helpers down under the skill's home.
+SEED_PATH="templates/common/stack-skills.sh.tftpl"
 
 # The ten headings the contract pins, in the order the runbook runs them. A heading that is
 # renamed or moved silently shortens the procedure, so the claim is the ordered list.
@@ -91,8 +99,8 @@ VERBATIM=(
   'bazelisk test //:test-fast'
   'bazelisk test //:lint --test_tag_filters=manual'
   'templates/common/'
-  'skills/reflect-and-evolve-repo/references/checklist.md'
-  'skills/reflect-and-evolve/scripts/session_signals.py'
+  "${CHECKLIST_REF}"
+  "${SWEEPER_REF}"
   "${CHANGELOG_NEGATION}"
 )
 
@@ -163,11 +171,12 @@ PROBE_SID=01a1feed
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root"
-  SKILL="${REPO_ROOT}/skills/reflect-and-evolve-repo/SKILL.md"
+  SKILL="${REPO_ROOT}/templates/common/reflect-and-evolve-repo.SKILL.md"
   SKILL_LINK="${REPO_ROOT}/.grok/skills/reflect-and-evolve-repo/SKILL.md"
   CHECKLIST="${REPO_ROOT}/${CHECKLIST_PATH}"
-  SIBLING="${REPO_ROOT}/skills/reflect-and-evolve/SKILL.md"
+  SIBLING="${REPO_ROOT}/templates/common/reflect-and-evolve.SKILL.md"
   SWEEPER="${REPO_ROOT}/${SWEEPER_PATH}"
+  SEED="${REPO_ROOT}/${SEED_PATH}"
   DOC_PAGE="${REPO_ROOT}/${DOC_PATH}"
 }
 
@@ -296,8 +305,23 @@ category_line() {
     return 1
   }
   # readlink -f resolves both sides, so the claim is one source of truth rather than two
-  # copies that agree today.
-  [[ "$(readlink -f "${SKILL_LINK}")" == "$(readlink -f "${SKILL}")" ]]
+  # copies that agree today. Under a runfiles tree the chain walks out to the real checkout,
+  # so the aim is matched on its templates/common/ tail rather than on an absolute path, and
+  # cmp proves the bytes are the payload's. A link still aimed at the retired skills/ path
+  # resolves to nothing here, so it fails as a dangling link rather than as a wrong tail.
+  local target
+  target="$(readlink -f "${SKILL_LINK}")"
+  case "${target}" in
+    */templates/common/reflect-and-evolve-repo.SKILL.md) ;;
+    *)
+      echo "${SKILL_LINK} resolves to ${target}, not to the templates/common/reflect-and-evolve-repo.SKILL.md body" >&2
+      return 1
+      ;;
+  esac
+  cmp -s "${SKILL_LINK}" "${SKILL}" || {
+    echo "${SKILL_LINK} does not carry the bytes of ${SKILL}" >&2
+    return 1
+  }
 }
 
 @test "reflect_and_evolve_repo_skill: frontmatter parses, names the skill, and sells it well enough to fire" {
@@ -435,13 +459,35 @@ RFE_REPO_FRONTMATTER_CHECK
   done
 }
 
+# tracked_source_for <home-path> -- print the tracked templates/common/ payload the seed lays
+# at that skill-home path, or fail when the path is no page the seed ships. The body names its
+# helper pages by the home they land in, because that is what a reader opens, and by the
+# templates/common/ payload they ship from, because that is what a person edits; both spellings
+# have to resolve to a tracked file, and the source is what the gate proves exists.
+tracked_source_for() {
+  case "${1}" in
+    templates/common/reflect-and-evolve-repo.checklist.md)
+      printf '%s\n' "${REPO_ROOT}/templates/common/reflect-and-evolve-repo.checklist.md" ;;
+    templates/common/reflect-and-evolve.session_signals.py)
+      printf '%s\n' "${REPO_ROOT}/templates/common/reflect-and-evolve.session_signals.py" ;;
+    *reflect-and-evolve-repo/references/checklist.md)
+      printf '%s\n' "${REPO_ROOT}/templates/common/reflect-and-evolve-repo.checklist.md" ;;
+    *reflect-and-evolve/references/checklist.md)
+      printf '%s\n' "${REPO_ROOT}/templates/common/reflect-and-evolve.checklist.md" ;;
+    */scripts/session_signals.py)
+      printf '%s\n' "${REPO_ROOT}/templates/common/reflect-and-evolve.session_signals.py" ;;
+    *)
+      return 1 ;;
+  esac
+}
+
 @test "reflect_and_evolve_repo_skill: the body names its reference pages and both exist" {
   # Silent failure: prose that points at a page nobody shipped reads perfectly, and the
   # reader finds out by opening a path that is not there. The paths are extracted from the
   # slice rather than substring-grepped, because a pinned span is also a substring of a
   # renamed target: References aimed at checklist.md.bak satisfies a grep and sends the reader
   # nowhere.
-  local block page paths rel extracted=0
+  local block page paths rel src extracted=0
   block="$(section "${SKILL}" "## References")"
   [[ -n "${block}" ]] || {
     echo "no '## References' section in ${SKILL}" >&2
@@ -452,8 +498,13 @@ RFE_REPO_FRONTMATTER_CHECK
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
     ((extracted += 1))
-    [[ -f "${REPO_ROOT}/${rel}" ]] || {
-      echo "the References section points at ${rel}, which is not on disk:" >&2
+    src="$(tracked_source_for "${rel}")" || {
+      echo "the References section names ${rel}, which is no page the seed ships:" >&2
+      printf '%s\n' "${block}" >&2
+      return 1
+    }
+    [[ -f "${src}" ]] || {
+      echo "the References section points at ${rel}, whose tracked source ${src} is not on disk:" >&2
       printf '%s\n' "${block}" >&2
       return 1
     }
@@ -514,15 +565,22 @@ RFE_REPO_FRONTMATTER_CHECK
   # breaks whatever later consumes the bytes, so the count is checked too or an empty tree
   # would satisfy the loop.
   local file checked=0
-  # Runfiles hand these over as symlinks into the source tree, so -type f alone matches
-  # nothing here; -type l plus the file test reads the bytes that actually ship.
-  while IFS= read -r file; do
+  # The shipped set is the two templates/common/ payloads the stack seed renders for this
+  # skill: the body and its checklist page. Runfiles hand them over as symlinks into the
+  # source tree, so the file test reads the bytes that actually ship.
+  for file in "${SKILL}" "${CHECKLIST}"; do
     [[ -f "${file}" ]] || continue
     assert_ascii "${file}" || return 1
     ((checked += 1))
-  done < <(find "${REPO_ROOT}/skills/reflect-and-evolve-repo" \( -type f -o -type l \) | sort)
-  [[ ${checked} -ge 2 ]] || {
-    echo "only ${checked} file(s) under skills/reflect-and-evolve-repo/, expected the body and the checklist page" >&2
+  done
+  [[ ${checked} -eq 2 ]] || {
+    echo "only ${checked} of the 2 files this skill ships (body, checklist) are present under templates/common/" >&2
+    return 1
+  }
+  # And the checklist has to reach the home the body names, not just exist beside the body:
+  # a payload that stopped being seeded leaves the reader's path missing.
+  grep -qF -- '$HOME/.coder/skills/reflect-and-evolve-repo/references/checklist.md' "${SEED}" || {
+    echo "stack-skills.sh.tftpl never lays down the checklist under the skill's own home" >&2
     return 1
   }
 }
@@ -682,13 +740,15 @@ RFE_REPO_FRONTMATTER_CHECK
       echo "a forked sweeper is named at $(grep -nE 'reflect-and-evolve-repo/[^ ]*session_signals\.py' "${page}" | head -n 1)" >&2
       return 1
     fi
-    grep -qF -- "${SWEEPER_PATH}" "${page}" || {
-      echo "${page} never names the shared sweeper ${SWEEPER_PATH}" >&2
+    grep -qF -- "${SWEEPER_REF}" "${page}" || {
+      echo "${page} never names the shared sweeper ${SWEEPER_REF}" >&2
       return 1
     }
   done
-  if [[ -e "${REPO_ROOT}/skills/reflect-and-evolve-repo/scripts/session_signals.py" ]]; then
-    echo "the sweeper was forked into skills/reflect-and-evolve-repo/scripts/: it is shared, never copied" >&2
+  # No fork may exist on disk either: the shared sweeper ships once, under the sibling's own
+  # name, and a second payload beside this one would be a second unaudited reader of the store.
+  if [[ -e "${REPO_ROOT}/templates/common/reflect-and-evolve-repo.session_signals.py" ]]; then
+    echo "the sweeper was forked into templates/common/reflect-and-evolve-repo.session_signals.py: it is shared, never copied" >&2
     return 1
   fi
 }
@@ -794,11 +854,12 @@ RFE_REPO_FRONTMATTER_CHECK
     echo "the repo-scoped runbook subsection never names /reflect-and-evolve-repo" >&2
     return 1
   }
-  # The canonical-path claim, anchored the same way: skills/... is a substring of the
-  # .grok/skills/... symlink line, so an unanchored grep is satisfied by the discovery
-  # sentence alone and the subsection can drop "canonical at" without going red.
-  grep -qE '(^|[^[:alnum:]_./])skills/reflect-and-evolve-repo/SKILL\.md' <<<"${block}" || {
-    echo "the subsection does not say the canonical body is skills/reflect-and-evolve-repo/SKILL.md" >&2
+  # The canonical-path claim, anchored the same way: the discovery sentence names the
+  # .grok/skills/reflect-and-evolve-repo/SKILL.md link, and only the canonical sentence names
+  # the templates/common/ body, so an unanchored grep is satisfied by the discovery line alone
+  # and the subsection could drop "canonical at" without going red.
+  grep -qE '(^|[^[:alnum:]_./])templates/common/reflect-and-evolve-repo\.SKILL\.md' <<<"${block}" || {
+    echo "the subsection does not say the canonical body is templates/common/reflect-and-evolve-repo.SKILL.md" >&2
     return 1
   }
 }

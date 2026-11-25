@@ -1302,8 +1302,13 @@ The guard family under `~/.grok/hooks/` - secret guard, dangerous-command guard 
 `hooks/bin/deny-patterns.txt`, the post-edit formatter, and the selective test runner that
 is off until `EVO_T1_HOOK_TESTS=1` - rides `coder_script "stack_hooks"`.
 
-The two `.grok/workflows/` files added alongside `fleet-verify.js` are
-`implement-reviewed` and `debug-fix`.
+The three `.grok/workflows/` files added alongside `fleet-verify.js` are
+`implement-reviewed`, `debug-fix`, and `open-bugs`. The last of them keeps a bug associated
+with its fix: it writes the pull-request body to `/tmp/open-bugs/pr-body-issue-<n>.md`, prints
+that path, and posts the issue comment that names the branch, the tip sha, and the file - with
+`Closes #<n>` only when the independent skeptic kept every claim and `Refs #<n>` otherwise. It
+pushes nothing and opens nothing unless you pass `openPr: true`, so the push and
+`gh pr create --body-file <that path>` stay your two commands.
 
 Detail:
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-five-advisor-commands).

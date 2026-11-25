@@ -15,7 +15,10 @@
 # Coder Agents chat agent reads, and into its ~/.agents/skills/<name>/ twin, which
 # is what the Grok Build CLI reads - absent-only, from ONE
 # templates/common/stack-repo-skills.sh.tftpl body rendered by the
-# coder_script "stack_repo_skills" block in both main.tf twins. Unlike the trio,
+# coder_script "stack_repo_skills" block in both main.tf twins. The fifth command of
+# the family, /trunk-refactor, rides a body of its own for the ceiling reason that
+# body's header gives, and tests/bats/trunk-refactor-skill.bats polices that body; the
+# gates here name it only where one spans the family. Unlike the trio,
 # three of these four carry python helpers beside the SKILL.md, under scripts/ in
 # BOTH homes, because a skill body names the ~/.agents path while the chat agent
 # reads the same text out of ~/.coder; the fourth ships a SKILL.md alone, so the
@@ -30,8 +33,11 @@
 # every payload it inlines), each feed is chomped and sits INSIDE the block (both
 # byte readers credit a body only by the path.module names within it), the
 # ~/.agents side is a cp of the managed ~/.coder copy rather than a second here-doc
-# body, none of the family leaks back into startup.sh.tftpl, and the reseed list
-# and the push guard name all sixteen targets and all eight files.
+# body, none of the family leaks back into startup.sh.tftpl, the repository-tier
+# copy of ez-bazel-first is guarded per repository and behind a link test, and the
+# reseed list names both homes of every family target, the trunk-refactor pair from
+# that other body included, and the push guard names all nine payload files of this
+# body beside the body itself.
 #
 # The authoring trio's own seam is tests/bats/ez-skill-authoring.bats; this suite
 # covers the other family and shares no assertion with it.
@@ -49,19 +55,35 @@ load 'test_helper'
 REPO_ROOT=""
 SEED=""
 
-# Index-aligned across all four arrays: the home-relative target (below <home>/),
-# the payload file it comes from, the here-doc tag it travels under, and the
-# main.tf map key that feeds that tag.
-TARGETS=(
-  "ez-bazel-first/SKILL.md"
-  "ez-bazel-first/scripts/owned_files_check.py"
-  "ez-bazel-first/scripts/glob_budget.py"
+# Index-aligned across the two arrays below: the home-relative target (below
+# <home>/) and the payload file it comes from. These are the five that keep the
+# global two-home pair: the target, its mkdir, its cat on the ~/.coder side and the
+# cp that twins it into ~/.agents.
+GLOBAL_TARGETS=(
   "ez-strong-types/SKILL.md"
   "ez-strong-types/scripts/type_baseline.py"
   "ez-trunk-based-repo/SKILL.md"
   "ez-micro-plan/SKILL.md"
   "ez-micro-plan/scripts/plan_check.py"
 )
+GLOBAL_PAYLOADS=(
+  "ez-strong-types.SKILL.md"
+  "ez-strong-types.type_baseline.py"
+  "ez-trunk-based-repo.SKILL.md"
+  "ez-micro-plan.SKILL.md"
+  "ez-micro-plan.plan_check.py"
+)
+
+# All eight payloads the body carries, index-aligned with the here-doc tag (TAGS)
+# and the main.tf map key (KEYS) that feeds it. ez-bazel-first is absent from
+# GLOBAL_TARGETS on purpose: it converts a repository, so the body stages its three
+# payloads once and copies them into the repo tier at
+# <repo>/.grok/skills/ez-bazel-first/ for every Bazel repository under the workspace
+# root - a tier its own test below pins. It still rides the body as a here-doc and
+# still has to be pushed, so it stays in the three arrays. stack-repo-commands is
+# absent from GLOBAL_TARGETS for the same reason: it is seeded per clone, into the
+# checkout that carries the .evo-t1-stack-repo sentinel, and
+# tests/bats/seed-dev-env.bats runs that path for real.
 PAYLOADS=(
   "ez-bazel-first.SKILL.md"
   "ez-bazel-first.owned_files_check.py"
@@ -71,6 +93,7 @@ PAYLOADS=(
   "ez-trunk-based-repo.SKILL.md"
   "ez-micro-plan.SKILL.md"
   "ez-micro-plan.plan_check.py"
+  "stack-repo-commands.SKILL.md"
 )
 TAGS=(
   EZ_BAZEL_FIRST_SKILL_MD_EOF
@@ -81,6 +104,7 @@ TAGS=(
   EZ_TRUNK_BASED_REPO_SKILL_MD_EOF
   EZ_MICRO_PLAN_SKILL_MD_EOF
   EZ_MICRO_PLAN_PLAN_CHECK_PY_EOF
+  STACK_REPO_COMMANDS_SKILL_MD_EOF
 )
 KEYS=(
   ez_bazel_first_skill
@@ -91,7 +115,16 @@ KEYS=(
   ez_trunk_based_repo_skill
   ez_micro_plan_skill
   ez_micro_plan_plan_check
+  stack_repo_commands_skill
 )
+
+# The whole family, both bodies: trunk-refactor is absent from the five arrays above
+# because templates/common/trunk-refactor-seed.sh.tftpl seeds it out of its own
+# body, one coder_script of its own for the reason that body's header gives. It joins
+# the arrays below only where a gate spans the family rather than one body -- the
+# reseed list and the push guard, which do not care which body wrote the file.
+FAMILY_TARGETS=( "${GLOBAL_TARGETS[@]}" "trunk-refactor/SKILL.md" )
+FAMILY_PAYLOADS=( "${GLOBAL_PAYLOADS[@]}" "trunk-refactor.SKILL.md" )
 
 # The frontmatter keys Grok Build documents: the whole set a payload may carry.
 DOC_KEYS=(name description when-to-use allowed-tools argument-hint user-invocable
@@ -141,7 +174,7 @@ setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   SEED="${REPO_ROOT}/templates/common/stack-repo-skills.sh.tftpl"
   # Only the subject of the suite may skip it: with no seed body or no twin there is
-  # nothing left to claim. The eight payloads deliberately are NOT gated here - a
+  # nothing left to claim. The nine payloads deliberately are NOT gated here - a
   # payload renamed away must fail the tests that police it, not skip them quietly.
   [[ -f "${SEED}" ]] || skip "the repository-command seed body is not reachable from ${REPO_ROOT}"
   [[ -f "${REPO_ROOT}/templates/workspace/main.tf" &&
@@ -189,10 +222,10 @@ ascii_gate() {
 }
 
 # ---------------------------------------------------------------------------
-# The delivery seam: one body, eight payloads, two homes.
+# The delivery seam: one body, nine payloads, two homes.
 # ---------------------------------------------------------------------------
 
-@test "stack-repo-skills seed: the body seeds all eight targets into the coder home only while absent" {
+@test "stack-repo-skills seed: the body seeds all five global-home targets into the coder home only while absent" {
   # Absent-only is the takeover contract: a file that exists belongs to the user,
   # so a boot must never write over one. Lose a guard and the next boot silently
   # rewrites whatever the operator wrote into ~/.coder/skills. Each target needs
@@ -201,8 +234,8 @@ ascii_gate() {
   # templates/common/ exists once and both twins consume it, so the body is read
   # once here while everything main.tf does with it is checked per twin.
   local i tgt n
-  for i in "${!TARGETS[@]}"; do
-    tgt="${TARGETS[i]}"
+  for i in "${!GLOBAL_TARGETS[@]}"; do
+    tgt="${GLOBAL_TARGETS[i]}"
     assert_contains_file "${tgt} coder guard" "${SEED}" \
       '^if \[ ! -f "\$HOME/\.coder/skills/'"${tgt}"'" \]; then$'
     assert_contains_file "${tgt} coder mkdir" "${SEED}" \
@@ -210,10 +243,17 @@ ascii_gate() {
     assert_contains_file "${tgt} coder cat" "${SEED}" \
       'cat >"\$HOME/\.coder/skills/'"${tgt}"'" '"$(hdoc_open)"
   done
-  # Eight, not seven: a target whose block was dropped mid-refactor would otherwise
-  # leave the loop above asserting nothing about a file nobody seeds any more.
+  # Counted from the body, not from the array: a target whose block was dropped
+  # mid-refactor would otherwise leave the loop above asserting nothing about a file
+  # nobody seeds any more.
   n="$(grep -cE '^if \[ ! -f "\$HOME/\.coder/skills/' "${SEED}" || true)"
-  assert_eq "the body guards eight coder targets" "8" "${n}"
+  assert_eq "the body guards every global-home target and no other" \
+    "${#GLOBAL_TARGETS[@]}" "${n}"
+  # And ez-bazel-first never reaches a home: a copy under ~/.coder/skills advertises
+  # a Bazel gate to a session working on a project that has none, which is the whole
+  # reason it moved to the repository tier.
+  n="$(grep -cE '"\$HOME/\.(coder|agents)/skills/ez-bazel-first' "${SEED}" || true)"
+  assert_eq "ez-bazel-first is never written into a global skill home" "0" "${n}"
 }
 
 @test "stack-repo-skills seed: every payload arrives through a quoted here-doc whose tag closes alone" {
@@ -236,7 +276,7 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills seed: each here-doc body is its own rendered interpolation, and the body consumes exactly the eight payload keys and the boot logger" {
+@test "stack-repo-skills seed: each here-doc body is its own rendered interpolation, and the body consumes exactly the nine payload keys and the boot logger" {
   # A here-doc that quietly stopped receiving its payload still has a legal opener
   # and closer, so the tag checks above pass vacuously: the file that lands on disk
   # would be empty and the command simply missing. Pin the line right after each
@@ -255,8 +295,8 @@ ascii_gate() {
     printf 'FAIL: %s interpolates no map key at all\n' "${SEED}" >&2
     return 1; }
   want="$(printf '%s\n' "${KEYS[@]}" boot_log_lib | sed 's/^/${/; s/$/}/' | sort -u)"
-  assert_eq "the body reads the eight payload keys plus the boot logger" "${want}" "${got}"
-  assert_eq "and each key is interpolated exactly once" "9" \
+  assert_eq "the body reads the nine payload keys plus the boot logger" "${want}" "${got}"
+  assert_eq "and each key is interpolated exactly once" "10" \
     "$(grep -cE '^\$\{[a-z_]+\}$' "${SEED}" || true)"
   # The ninth key carries no payload: main.tf passes the TEXT of
   # templates/common/boot-log.lib.sh for it, and the body drops that text in as one
@@ -284,9 +324,9 @@ ascii_gate() {
   # total - one per payload, all on the coder side.
   local i tgt n
   n="$(grep -cE -- "$(hdoc_open)'[A-Z_]+_EOF'" "${SEED}" || true)"
-  assert_eq "the body holds exactly eight quoted here-docs" "8" "${n}"
-  for i in "${!TARGETS[@]}"; do
-    tgt="${TARGETS[i]}"
+  assert_eq "the body holds exactly nine quoted here-docs" "9" "${n}"
+  for i in "${!GLOBAL_TARGETS[@]}"; do
+    tgt="${GLOBAL_TARGETS[i]}"
     assert_contains_file "${tgt} agents guard" "${SEED}" \
       '^if \[ ! -f "\$HOME/\.agents/skills/'"${tgt}"'" \]; then$'
     assert_contains_file "${tgt} agents mkdir" "${SEED}" \
@@ -300,7 +340,7 @@ ascii_gate() {
     assert_eq "${tgt} never gets its own here-doc on the agents side" "0" "${n}"
   done
   n="$(grep -cE '^  cp "\$HOME/\.coder/skills/' "${SEED}" || true)"
-  assert_eq "eight cp lines carry the twin" "8" "${n}"
+  assert_eq "one cp line carries each twin" "${#GLOBAL_TARGETS[@]}" "${n}"
 }
 
 @test "stack-repo-skills seed: the file is a plain-ASCII POSIX sh coder_script body" {
@@ -336,9 +376,58 @@ ascii_gate() {
     printf 'FAIL: %s writes a skills path with no absent-guard in front:\n%s' "${SEED}" "${bad}" >&2
     return 1
   fi
-  # Non-vacuity: the walk above has sixteen writers to cover, eight cats and eight cps.
+  # Non-vacuity: the walk above has ten writers to cover, five cats and five cps -
+  # the two-home pair for every target the suite names. The repository-tier copies
+  # this body also makes are policed by the test below, which requires each of them
+  # to sit behind the symlink guard.
   writers="$(grep -cE '^  (cat >|cp )"[^"]*/skills/' "${SEED}" || true)"
-  assert_eq "the walk covers sixteen guarded writers" "16" "${writers}"
+  assert_eq "the walk covers every guarded two-home writer" \
+    "$(( ${#GLOBAL_TARGETS[@]} * 2 ))" "${writers}"
+}
+
+@test "stack-repo-skills seed: ez-bazel-first seeds the repository tier, absent-only and link-guarded" {
+  # The fourth member of this family converts a repository, so it belongs to the
+  # repository it converts. <repo>/.grok/skills/ is the tier the Grok Build CLI reads
+  # and the Coder Agents chat does not, so it has one home and no cp twin; the
+  # single-source rule survives as one staged copy per payload, cp'd per repository.
+  # Two things make that safe and both are pinned here: the copy is absent-only per
+  # repository, so a copy the repository tracks or a person took over is left alone,
+  # and a path behind a link is refused rather than written through by cp.
+  local name n
+  for name in SKILL.md owned_files_check.py glob_budget.py; do
+    assert_contains_file "${name} is staged once" "${SEED}" \
+      'cat >"\$bazel_first_stage/'"${name}"'" '"$(hdoc_open)"
+  done
+  # Each repository copy is a cp of the staged copy: one literal line for the runbook
+  # and one loop for the two helpers, so no payload is ever inlined twice. The needles
+  # below spell every braced shell var \$\$\{...\}: this is a .tftpl, so a var reaches the
+  # shell only through Terraform's doubled-dollar escape, and a body that wrote a single
+  # one would fail to plan rather than seed the wrong path.
+  assert_contains_file "the runbook reaches each repository as a cp of the staged copy" "${SEED}" \
+    'cp "\$bazel_first_stage/SKILL\.md" "\$\$\{evo_t1_skill_dir\}/SKILL\.md"'
+  assert_contains_file "both helpers are copied from the staged dir, not a second body" "${SEED}" \
+    'cp "\$bazel_first_stage/\$\$\{evo_t1_helper\}"'
+  assert_contains_file "the helper loop names exactly the two shipped helpers" "${SEED}" \
+    'for evo_t1_helper in owned_files_check\.py glob_budget\.py; do$'
+  assert_contains_file "the tier is the repository's own skills dir" "${SEED}" \
+    'evo_t1_skill_dir="\$\$\{evo_t1_repo\}\.grok/skills/ez-bazel-first"'
+  assert_contains_file "the helpers keep the scripts/ subdir the skill names" "${SEED}" \
+    'mkdir -p "\$\$\{evo_t1_skill_dir\}/scripts"'
+  # Only a folder that is a git repository and names the Bazel module gets a copy;
+  # the two WORKSPACE spellings are the pre-bzlmod form of a repo this skill has not
+  # converted yet. Anything else is named in the log and seeded nowhere.
+  assert_contains_file "a plain folder is reported and seeded nowhere" "${SEED}" \
+    'is not a bazel repository, seeded nowhere'
+  assert_contains_file "the module file is what makes a repository a bazel one" "${SEED}" \
+    '\[ ! -f "\$\$\{evo_t1_repo\}MODULE\.bazel" \]'
+  # A dangling link passes "[ ! -e ]", which is why the guard tests the path and the
+  # directory above it, and why it cannot be a plain absent test.
+  assert_contains_file "a path behind a link is refused, not written through" "${SEED}" \
+    '\[ -L "\$1" \] \|\| \[ -L '
+  assert_contains_file "and the guard still requires the target to be absent" "${SEED}" \
+    '\[ ! -e "\$1" \]$'
+  n="$(grep -cE '^ *if evo_t1_repo_writable ' "${SEED}" || true)"
+  assert_eq "every repository-tier copy sits behind that guard" "3" "${n}"
 }
 
 # ---------------------------------------------------------------------------
@@ -374,7 +463,7 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills feed: the eight payloads are chomped and live inside that block alone" {
+@test "stack-repo-skills feed: the nine payloads are chomped and live inside that block alone" {
   # Two load-bearing details. chomp: the here-doc closes on its own line, so a
   # trailing newline in the payload adds a blank line to every seeded file and
   # drifts the marker comment off the shape the parser and these tests expect.
@@ -431,13 +520,13 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills size: the body, its boot logger and all eight payloads are measured in both twins" {
+@test "stack-repo-skills size: the body, its boot logger and all nine payloads are measured in both twins" {
   # This is the guard that keeps the escape hatch honest. startup_size.awk is what
   # the push reads to refuse an argument past MAX_ARG_STRLEN before the workspace
   # ever boots; a body it does not emit a record for is a body nobody measures, and
   # it shows up as a workspace that fails to boot with "A startup script has failed"
-  # instead of as a failed push. Ten records per twin: the body itself, the boot
-  # logger main.tf hands it, and the eight payloads it inlines, and none of them may
+  # instead of as a failed push. Eleven records per twin: the body itself, the boot
+  # logger main.tf hands it, and the nine payloads it inlines, and none of them may
   # fall through to a catch-all.
   local twin out want tab records
   tab="$(printf '\t')"
@@ -451,7 +540,7 @@ ascii_gate() {
         "^stack-repo-skills\.sh\.tftpl${tab}${want//./\\.}\$" "${out}"
     done
     records="$(printf '%s\n' "${out}" | grep -c "^stack-repo-skills\.sh\.tftpl${tab}" || true)"
-    assert_eq "${twin} emits exactly ten records for the body" "10" "${records}"
+    assert_eq "${twin} emits exactly eleven records for the body" "11" "${records}"
     # A body this reader cannot name is one it cannot size.
     assert_not_match "${twin} never reports the new body as unmeasurable" \
       "^stack-repo-skills\.sh\.tftpl${tab}(HEREDOC|OTHER|CLASH)\$" "${out}"
@@ -462,7 +551,7 @@ ascii_gate() {
 # Invariants every payload of the family shares.
 # ---------------------------------------------------------------------------
 
-@test "payload: each of the eight exists, is non-empty, plain ASCII, CR-free and marker-carrying" {
+@test "payload: each of the nine exists, is non-empty, plain ASCII, CR-free and marker-carrying" {
   # The marker is what makes a seeded file reclaimable and what the boot's ownership
   # probe reads; a payload that lost it is a file the seeder may treat as the user's,
   # and a non-ASCII byte or a CR reaches every workspace of both templates as text a
@@ -551,18 +640,19 @@ ascii_gate() {
 # The two lists that have to name the family: the reseed set and the push guard.
 # ---------------------------------------------------------------------------
 
-@test "stack-repo-skills seams: config_seed names exactly sixteen targets against the eight payloads" {
+@test "stack-repo-skills seams: config_seed names exactly the twelve family targets and retires the six ez-bazel-first ones" {
   # refresh-configs reseeds from this list and the boot only writes absent files, so
   # a target missing here leaves a workspace with a stale or absent command after a
   # stack update forever - and one home missing means the operator has the command
-  # in the CLI and not in the chat, or the reverse. Sixteen is eight payloads x two
-  # homes.
+  # in the CLI and not in the chat, or the reverse. Twelve is six targets x two
+  # homes: the five this body seeds plus trunk-refactor, which its own body seeds and
+  # the reseed list has to carry all the same.
   local lib="${REPO_ROOT}/scripts/lib/config_seed.sh"
   [ -f "${lib}" ] || skip "no config_seed lib under ${REPO_ROOT}/scripts/lib"
-  local i tgt payload src_c src_a n
-  for i in "${!TARGETS[@]}"; do
-    tgt="${TARGETS[i]}"
-    payload="${PAYLOADS[i]}"
+  local i tgt payload src_c src_a n seeds retired
+  for i in "${!FAMILY_TARGETS[@]}"; do
+    tgt="${FAMILY_TARGETS[i]}"
+    payload="${FAMILY_PAYLOADS[i]}"
     assert_contains_file "coder ${tgt} target" "${lib}" '~/\.coder/skills/'"${tgt}"'[[:space:]]'
     assert_contains_file "agents ${tgt} target" "${lib}" '~/\.agents/skills/'"${tgt}"'[[:space:]]'
     # The ~/.agents spelling must be the twin of the ~/.coder spelling: same target
@@ -577,11 +667,23 @@ ascii_gate() {
     assert_file_exists "${payload} the reseed list points at exists" \
       "${REPO_ROOT}/${src_c}"
   done
-  n="$(grep -cE "^[[:space:]]*'~/\.(coder|agents)/skills/ez-(bazel-first|strong-types|trunk-based-repo|micro-plan)/" "${lib}" || true)"
-  assert_eq "sixteen repo-command targets, both homes per payload" "16" "${n}"
+  n="$(grep -cE "^[[:space:]]*'~/\.(coder|agents)/skills/(ez-(strong-types|trunk-based-repo|micro-plan)|trunk-refactor)/" "${lib}" || true)"
+  assert_eq "twelve repo-command targets across both bodies, both homes per payload" \
+    "$(( ${#FAMILY_TARGETS[@]} * 2 ))" "${n}"
+
+  # The repository tier is not home-relative, so it cannot be a reseed target; the
+  # six global ez-bazel-first paths the tier change retires have to leave the reseed
+  # list and join the retire list, or a workspace that booted while they were seeded
+  # keeps advertising a Bazel gate to a project that has none.
+  seeds="$(awk '/^seed_seed_targets\(\) \{$/ { on = 1; next } on && /^\}/ { exit } on { print }' "${lib}")"
+  retired="$(awk '/^seed_retired_targets\(\) \{$/ { on = 1; next } on && /^\}/ { exit } on { print }' "${lib}")"
+  n="$(printf '%s\n' "${seeds}" | grep -cE "^[[:space:]]*'~/.*ez-bazel-first" || true)"
+  assert_eq "the reseed list names no global ez-bazel-first path" "0" "${n}"
+  n="$(printf '%s\n' "${retired}" | grep -cE "^[[:space:]]*'~/\.(coder|agents)/skills/ez-bazel-first/" || true)"
+  assert_eq "the retire list names all six retired global paths" "6" "${n}"
 }
 
-@test "stack-repo-skills seams: the push guard refuses without all eight payloads and the body" {
+@test "stack-repo-skills seams: the push guard refuses without all nine payloads and the body" {
   # main.tf reads each of these out of the pushed copy, so a push that shipped
   # without one produces a template that renders garbage or fails to plan on every
   # workspace made from it afterwards. The guard has to live in template_push_one -

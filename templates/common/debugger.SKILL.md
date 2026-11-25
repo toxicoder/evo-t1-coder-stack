@@ -141,13 +141,16 @@ dependency while a bug is open -- a cleanup you want goes in a later commit, vis
 ### Write the red test first
 
 Write the smallest test that fails for this symptom at the lowest level that still catches it, and
-run it against the unfixed tree before the fix lands:
+run it against the unfixed tree before the fix lands. Discover the repo's own test and gate commands
+first -- the nearest `BUILD.bazel` plus `bazelisk query 'kind(test, //...:all)'`, the `scripts` map in
+`package.json`, the `Makefile`'s target list, or the steps in `.github/workflows` -- then run them:
 
-    bazelisk test //tests:bats_<stem>_test --nocache_test_results   # red: quote this run
-    bazelisk test //tests:bats_<stem>_test --nocache_test_results   # green: same test, after
-    bazelisk test //:test-fast
+    <the repo's own command for that one test file> --no-cache   # red: quote this run
+    <the same command again>                                     # green: same test, after
+    <the repo's own whole-tree gate>                             # after the fix
 
-The flag is not decoration: a cached green is a real pass over unchanged inputs and this is the run
+The no-cache flag is not decoration (`--nocache_test_results` under Bazel, `--no-cache` or a fresh
+container elsewhere): a cached green is a real pass over unchanged inputs and this is the run
 where they change. The red test ships in the same commit as the fix.
 
 ### Hand both runs to a skeptic
@@ -160,9 +163,9 @@ writer, not you -- to run both.
 Each line is a command that ran and the output it printed, quoted, not an adjective claimed:
 
     # repro: the exact Phase 1 command with the failure quoted under it
-    # red:   the new test on the unfixed tree, --nocache_test_results, failing
+    # red:   the new test on the unfixed tree, no-cache flag on, failing
     # green: the same test after the fix, passing
-    bazelisk test //:test-fast   # passes, in your own shell
+    <the repo's own gate command, discovered in Phase 5>   # passes, in your own shell
     # skeptic on agent-review: re-ran both runs; returned no broken claim
 
 The reporter's acceptance wording is quoted back and answered line by line when the report came

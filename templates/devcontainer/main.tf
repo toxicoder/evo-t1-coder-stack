@@ -284,11 +284,11 @@ data "coder_parameter" "vscode_color_theme" {
 # preset never silently picks a Grok profile or a model for the person clicking it.
 data "coder_workspace_preset" "devcontainer_default" {
   name        = "Devcontainer default"
-  description = "Clone the template's default repository and start its .devcontainer/devcontainer.json on the DinD sidecar."
+  description = "Build the dev container of the repository you name, on the DinD sidecar. No repository is preselected."
   default     = true
 
   parameters = {
-    (data.coder_parameter.repo_url.name) = var.repo_url
+    (data.coder_parameter.use_devcontainer.name) = "true"
   }
 }
 
@@ -296,11 +296,10 @@ data "coder_workspace_preset" "devcontainer_default" {
 # own (and for anyone who wants the editor on the plain container regardless).
 data "coder_workspace_preset" "plain_clone" {
   name        = "Plain clone"
-  description = "Clone the default repository and open the editor on it in the plain workspace container; no dev container build."
+  description = "Open the editor on the repository you name in the plain workspace container; no dev container build. No repository is preselected."
   default     = false
 
   parameters = {
-    (data.coder_parameter.repo_url.name)         = var.repo_url
     (data.coder_parameter.use_devcontainer.name) = "false"
   }
 }
@@ -682,6 +681,18 @@ resource "coder_agent" "main" {
   # These environment variables allow you to make Git commits right away
   # after creating a workspace. They take precedence over ~/.gitconfig.
   env = merge({
+    # The container's clock, resolved here, on the host that runs the provisioner.
+    # Three sources in order: TZ in this process's environment (compose publishes
+    # it on the coder service), then the host's /etc/timezone, which compose
+    # bind-mounts into that container read-only, then Etc/UTC. try() is there
+    # because an image that ships no /etc/timezone makes that file() read fail
+    # outright rather than answer empty; try() answers "" for it, and coalesce
+    # skips an empty string, so the read falls through to Etc/UTC. The agent
+    # inherits the answer as TZ, which is source 1 of the probe coder_script
+    # .tz_setup runs -- without it the probe would read the workspace image's own
+    # /etc/timezone and answer the baked default instead of the host's.
+    TZ = coalesce(env("TZ"), try(trimspace(file("/etc/timezone")), ""), "Etc/UTC")
+
     GIT_AUTHOR_NAME     = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
     GIT_AUTHOR_EMAIL    = "${data.coder_workspace_owner.me.email}"
     GIT_COMMITTER_NAME  = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
@@ -903,7 +914,8 @@ resource "coder_script" "agents_seed" {
   })
 }
 
-# The stack's three skill commands, seeded by their own body rather than by the startup
+# The stack's five skill commands, with the sweeper and the two checklists the two
+# reflection runbooks shell out to, seeded by their own body rather than by the startup
 # script: every coder_script.script is a separate execve with its own single-argument
 # ceiling, which is what keeps the payloads above inside the budget. The body writes
 # each absent skill into ~/.coder/skills (the Coder Agents chat) and copies the twin
@@ -918,10 +930,15 @@ resource "coder_script" "stack_skills" {
   # Inlined here, not through a local: the size readers credit a body by the
   # path.module names inside its own block.
   script = templatefile("${path.module}/stack-skills.sh.tftpl", {
-    boot_log_lib          = chomp(file("${path.module}/boot-log.lib.sh"))
-    ez_learn_skill        = chomp(file("${path.module}/ez-learn.SKILL.md"))
-    ez_skillify_skill     = chomp(file("${path.module}/ez-skillify.SKILL.md"))
-    ez_create_skill_skill = chomp(file("${path.module}/ez-create-skill.SKILL.md"))
+    boot_log_lib                       = chomp(file("${path.module}/boot-log.lib.sh"))
+    ez_learn_skill                     = chomp(file("${path.module}/ez-learn.SKILL.md"))
+    ez_skillify_skill                  = chomp(file("${path.module}/ez-skillify.SKILL.md"))
+    ez_create_skill_skill              = chomp(file("${path.module}/ez-create-skill.SKILL.md"))
+    reflect_and_evolve_skill           = chomp(file("${path.module}/reflect-and-evolve.SKILL.md"))
+    reflect_and_evolve_repo_skill      = chomp(file("${path.module}/reflect-and-evolve-repo.SKILL.md"))
+    reflect_and_evolve_session_signals = chomp(file("${path.module}/reflect-and-evolve.session_signals.py"))
+    reflect_and_evolve_checklist       = chomp(file("${path.module}/reflect-and-evolve.checklist.md"))
+    reflect_and_evolve_repo_checklist  = chomp(file("${path.module}/reflect-and-evolve-repo.checklist.md"))
   })
 }
 
@@ -969,6 +986,25 @@ resource "coder_script" "stack_repo_skills" {
     ez_trunk_based_repo_skill        = chomp(file("${path.module}/ez-trunk-based-repo.SKILL.md"))
     ez_micro_plan_skill              = chomp(file("${path.module}/ez-micro-plan.SKILL.md"))
     ez_micro_plan_plan_check         = chomp(file("${path.module}/ez-micro-plan.plan_check.py"))
+    stack_repo_commands_skill        = chomp(file("${path.module}/stack-repo-commands.SKILL.md"))
+  })
+}
+
+# /trunk-refactor seeds in a body of its own for one reason: the five payloads above
+# compose past the single-argument ceiling the agent execs a body under, and a second
+# resource is what buys a second ceiling. Same absent-only contract, same two homes.
+resource "coder_script" "trunk_refactor_command" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the repository conversion command"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/trunk-refactor-seed.sh.tftpl", {
+    boot_log_lib         = chomp(file("${path.module}/boot-log.lib.sh"))
+    trunk_refactor_skill = chomp(file("${path.module}/trunk-refactor.SKILL.md"))
   })
 }
 
@@ -1033,6 +1069,28 @@ resource "coder_script" "stack_advisors" {
   })
 }
 
+# The container's clock, in a body of its own for the reason every family here has one:
+# each coder_script.script is a separate execve with its own single-argument ceiling,
+# and coder_agent.startup_script is the argument that runs out
+# (docs/coder-templates.md#the-one-argument-ceiling). Coder starts every run_on_start
+# body in one concurrent errgroup and sets the workspace ready only after all of them
+# return, so moving the stage out costs no ordering: the zone still lands before ready.
+resource "coder_script" "tz_setup" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Set the workspace timezone from the host"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+  timeout      = 60
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/tz-setup.sh.tftpl", {
+    boot_log_lib = chomp(file("${path.module}/boot-log.lib.sh"))
+    tz_probe     = chomp(file("${path.module}/tz.sh"))
+  })
+}
+
 # The guard family under ~/.grok/hooks/, seeded by its own body for the same ceiling
 # reason. Unlike every family above this one is marker-aware rather than absent-only: a
 # hook decides what a session may run and what it may write, so a copy that drifted from
@@ -1056,6 +1114,31 @@ resource "coder_script" "stack_hooks" {
     post_edit_format_sh        = chomp(file("${path.module}/hooks.post-edit-format.sh"))
     selective_test_runner_sh   = chomp(file("${path.module}/hooks.selective-test-runner.sh"))
     deny_patterns_txt          = chomp(file("${path.module}/hooks.deny-patterns.txt"))
+  })
+}
+
+# The three general-purpose workflows, seeded into the USER tier at ~/.grok/workflows/ by
+# its own body for the same ceiling reason. The repo's own .grok/workflows/ is not enough:
+# Grok reads project workflows only out of the trusted clone's own tree, so a workspace
+# that cloned some other repository never sees them, while $GROK_HOME/workflows is read in
+# every folder. Marker-aware like the hooks above and for the same reason - a workflow is a
+# program a session invokes by name, so a copy that drifted from the seed is a silent
+# behaviour change. docs/grok-build-and-agents.md#the-seeded-workflow-tier.
+resource "coder_script" "stack_workflows" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the saved workflows"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/stack-workflows.sh.tftpl", {
+    boot_log_lib                = chomp(file("${path.module}/boot-log.lib.sh"))
+    debug_fix_workflow          = chomp(file("${path.module}/debug-fix.workflow.js"))
+    fleet_verify_workflow       = chomp(file("${path.module}/fleet-verify.workflow.js"))
+    implement_reviewed_workflow = chomp(file("${path.module}/implement-reviewed.workflow.js"))
+    open_bugs_workflow          = chomp(file("${path.module}/open-bugs.workflow.js"))
   })
 }
 
@@ -1186,7 +1269,7 @@ locals {
   # value as the workspace twin (both twins move together; the coder-apps
   # suite fails a drift). Nothing to clean up on a bump: this copy installs
   # into /tmp of a container that is rebuilt on every start.
-  code_server_version = "4.145.0"
+  code_server_version = "4.145.2"
 }
 
 resource "coder_script" "code_server" {
@@ -1755,6 +1838,22 @@ resource "docker_container" "workspace" {
     container_path = "/var/lib/grok-session-archive"
     volume_name    = "grok-session-archive"
     read_only      = false
+  }
+
+  # The read-only Grafana credential the coding agents query the observability
+  # stack with, at the same container path the workspace container above mounts
+  # it at. //scripts:grafana-agent-token mints it on the stack host, and this bind
+  # is the only way in: the token is a host file, so no named volume would carry
+  # it, and the mint's own --owner coder is what makes the 0600 file readable by
+  # this container's user. Read-only both ways on purpose - the workspace consumes
+  # the credential and never rotates it, which stays the operator's act on the
+  # host. A host that never ran the mint gets an empty root-owned directory here,
+  # and //scripts:observability-query answers with its own "no token" line rather
+  # than a 401, so the absence is legible.
+  volumes {
+    container_path = "/var/lib/evo-t1-observability"
+    host_path      = "/var/lib/evo-t1-observability"
+    read_only      = true
   }
 
   # Only the sidecar reference matters: it makes Terraform attach the daemon to

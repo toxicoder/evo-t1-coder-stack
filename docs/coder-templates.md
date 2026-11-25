@@ -158,6 +158,11 @@ missing one fails the push before the CLI runs.
   more heredocs in the first one for the reason this whole file keeps repeating: each
   `coder_script.script` is its own `execve` argument with its own ceiling, and a family
   that ships helpers grows faster than one that ships a `SKILL.md` each.
+- `trunk-refactor.SKILL.md` is the `/trunk-refactor` command, the procedure form that
+  converts a repository onto trunk-based development, and `trunk-refactor-seed.sh.tftpl`
+  is its `coder_script "trunk_refactor_command"` body. It is the one command of that
+  family with a body to itself: the four above already fill most of one argument, and
+  adding a fifth `SKILL.md` to that map is what crossed the bound the first time.
 
 #### The advisor commands and their body
 
@@ -370,6 +375,14 @@ advisor `SKILL.md` payloads, the `documenter` role, the code-index skill and its
 composes to 71032 bytes, and `coder_script.stack_hooks`, carrying the manifest, four
 guards and the deny list, to 39399 - 51848 and 83481 clear of the bound respectively,
 with neither startup twin touched.
+
+Measured again on 2026-11-24, after `/trunk-refactor` joined the repository-command
+family as its fifth member. That pushed `coder_script.stack_repo_skills` to 136684
+bytes, past the 122880 budget, so the fifth member now seeds from its own
+`trunk-refactor-seed.sh.tftpl` body under `coder_script.trunk_refactor_command`: the
+family body is back to 113597 (9283 clear) and the new body composes to 30210 (92670
+clear). This is the ceiling behaving as documented - the fifth payload did not raise
+the wall, it bought a second one.
 
 #### Escape hatches when a body outgrows the bound
 
@@ -1034,6 +1047,72 @@ workspace: see
 
 ### What the startup script does, in order
 
+The container's clock is not a stage of this body: `coder_script "tz_setup"` settles it,
+from the shared body `templates/common/tz-setup.sh.tftpl`, because the startup argument is
+the one `execve` that runs out of room (see
+[The one-argument ceiling](#the-one-argument-ceiling)). The body writes the `tz_probe`
+payload (`templates/common/tz.sh`, inlined by `main.tf`) to a temp path, runs it with `sh`,
+and takes one IANA name from it - the `TZ` the agent env injects first, then the timezone
+file, then the localtime link - writes that name to `/etc/timezone`, repoints
+`/etc/localtime` at the matching file under the zoneinfo tree, and exports `TZ`.
+
+The `TZ` that env injects is resolved on the stack host, where the provisioner runs, from
+the three sources compose hands it:
+
+```hcl
+TZ = coalesce(env("TZ"), try(trimspace(file("/etc/timezone")), ""), "Etc/UTC")
+```
+
+`docker-compose.yml` carries `TZ` on the `coder` service as a **null** (`TZ: ~`) and
+bind-mounts the host's `/etc/timezone` and `/etc/localtime` into that container read-only,
+which is what the two reads above see. Without them the probe would answer the *workspace
+image's* own `/etc/timezone`, the baked default, and the feature would do nothing.
+
+The null is the whole shape of the seam, because two readers share that one key and
+neither tolerates an empty value:
+
+- the server itself, which is Go, and Go reads a **present-and-empty** `TZ` as UTC and
+  ignores `/etc/localtime` outright (`time.initLocal`: `$TZ="" means use UTC`);
+- the resolver above, which runs in that same container and asks `env("TZ")`.
+
+A null takes its value from the environment compose was handed, `.env` included, and drops
+the key entirely when nothing set it. Unset, and neither reader sees a `TZ` at all: Go
+loads the mounted `/etc/localtime`, `coalesce` falls through to the mounted
+`/etc/timezone`, and both answer the host. Set, and one IANA name answers both. An
+`TZ: ${TZ:-}` default, or an `.env` carrying a bare `TZ=`, is the failure mode that shape
+avoids - compose resolves either of them to a present-and-empty value and the server
+quietly runs on UTC while the host runs somewhere else. `.env.example` therefore ships the
+key commented out rather than empty, and `tests/bats/workspace-tz.bats` pins the null, the
+two binds, and this line.
+
+**A host that ships no `/etc/timezone`.** That file is a Debian-derivative convention: a
+Fedora, Arch, or alpine-based host carries only `/etc/localtime`. Both binds use the long
+syntax with `bind: {create_host_path: false}` instead of the `KEY:TARGET:ro` short form
+precisely for those hosts, because the short form auto-creates a source the host does not
+have as a root-owned **directory** - at the container target, where `file("/etc/timezone")`
+then reads a directory and fails, and on the host, where it survives `docker compose down`
+and misleads the next `dpkg-reconfigure tzdata`. Refusing is the better half of that trade:
+`docker compose up` stops at the `coder` service with
+`bind source path does not exist: /etc/timezone` and creates nothing anywhere, and the host
+grows the file in one command:
+
+```sh
+printf '%s\n' Area/City >/etc/timezone # as root; or: dpkg-reconfigure tzdata
+```
+
+Setting `TZ` in `.env` pins the zone but does not rescue a missing file, because the bind
+is checked before the container starts. `try()` in the resolver stays as the guard for the
+file that exists but answers empty: `trimspace` makes that `""`, `coalesce` skips it, and
+the read falls through to `Etc/UTC`.
+
+Coder starts every `run_on_start` body in one concurrent errgroup and sets *ready* only
+once all of them return, so moving the stage out of the startup body cost no ordering: the
+clock is settled before the workspace is ready, and before any terminal or shell the agent
+opens reads it. It never fails the boot: an image with no tzdata, or an `/etc` this user
+cannot write, is one `boot_warn` line, because all the boot bodies share one 1 MiB agent
+log. The probe reads its three paths from the environment, which is how
+`tests/bats/workspace-tz.bats` aims it at a scratch tree.
+
 1. Installs `tmux` if it is missing, then seeds `~/.tmux.conf` (only while that file is
    absent or still carries the `managed-by: evo-t1-coder-stack` marker).
 2. Ensures the **Grok Build CLI** is on PATH. The golden image ships it, so the
@@ -1111,17 +1190,67 @@ The order above is not incidental; each line is a constraint the script has to k
   and the root-table middle-click paste are unbound, and `Prefix m` is only the switch
   that hands the wheel to tmux for a long scroll and hands it back.
 
-  - `set-clipboard on` and `allow-passthrough on` stay for the one copy route that is
+  - `set-clipboard on` stays for the one copy route that is
   not tmux's own - an app inside a pane (vim's `+` register, anything that emits
-  OSC 52) drives the machine clipboard through them, which is what a native terminal
+  OSC 52) drives the machine clipboard through it, which is what a native terminal
   hands that app - and a client that blocks OSC 52 (iTerm2 by default) gets nothing at
   all, because there is no tmux buffer left to fall back to.
+
+  - `allow-passthrough` ships off. What that option carries is the DCS-wrapped kind
+  alone: a pane app's own sequences in tmux's `ESC Ptmux;` form,
+  which the server hands to every attached client when it is on, and which is the
+  class that turns into garbage on screen when a client downstream stops draining.
+  The OSC 52 copy needs none of it (measured on the shipped tmux 3.4: that escape
+  reaches a read-only client with passthrough off). `Prefix p` switches it for the
+  one window that really wants its own sequences, and
+  `tmux show-options -gw allow-passthrough` reads the value back.
 
   - The browser build of VS
   Code drops that escape as well
   ([microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254)), so a
   pane app's OSC 52 copy is silent in the tab and lands over ssh from a real terminal
   app, while the operator's own copy in the tab is the plain drag.
+
+  - `history-limit 100000` is priced, not guessed. Measured on the shipped tmux 3.4
+  with one saturated pane: 50000 lines of 120-column output holds the server at 193 MB,
+  100000 at 381 MB, and the same 100000 lines of plain 80-column output costs 60 MB.
+  tmux applies the number to panes created from then on, so an existing pane keeps the
+  limit it was born with (tmux(1)) and a new pane or a `tmux kill-server` is what takes
+  a raise.
+
+  - `status-interval` is the server's own periodic work: each tick re-expands the status
+  line and runs the redraw pass for every attached client, the ones that stopped
+  draining included. This tmux ships it at 15. Measured on the shipped tmux 3.4 with one
+  attached client on a pane that writes nothing, over 16 seconds the stock status line
+  took the same 1102 bytes at 1 and at 60, while the same client on a status line that
+  changes every second took 6102 bytes at 1 against 1352 at 60. The stock `status-right`
+  is `%H:%M %d-%b-%y`, so 3 of the stock 4 ticks a minute re-expand a string that cannot
+  have changed; 60 is the finest step that string can show. The scope flag matters and
+  only `-g` works: the same number written `set -s status-interval` is dropped at config
+  load (measured -- the server keeps the stock 15 and reads nothing back), and a live
+  server takes the value on `tmux source-file ~/.tmux.conf`.
+
+  - `set-titles off` is a pin rather than a change: measured on a scratch server booted
+  with `-f /dev/null`, off is what this build already defaults to, and the seed states
+  it in the file the operator reads. One fewer string is pushed at every client each
+  time a pane's title moves.
+
+  - `escape-time 10` is upstream's 3.5 default (CHANGES), chosen over the 0 that vim
+  guides recommend. Measured on this build: `Esc`, 300 ms, `q` fires `M-q` at 500 and
+  not at 10, while 0 splits an Esc from the character behind it whenever a throttled
+  background tab delivers the two more than 10 ms apart. It is a server option, so
+  `tmux source-file ~/.tmux.conf` moves it for live panes.
+
+  - No option in the 3.4 set bounds a client that stops draining: `client_output`,
+  `client_buffer` and `client_last_activity` all expand to nothing on this build, and the
+  two pruning options are unusable here. Measured on a scratch server,
+  `destroy-unattached on` (which accepts only `off` and `on`; `dead` comes back
+  `unknown value`) destroys the session the moment its last client detaches, taking
+  everything running in it, and `exit-unattached` drops the server the same way -- the
+  opposite of what both launchers need, since a closed tab leaves its session unattached
+  for the next tab to rejoin. The stale-client sweep in the two launcher payloads is what
+  reaps a client like this; see
+  [grok-build-and-agents.md](grok-build-and-agents.md).
 
 #### The clone, the chown, and the best-effort tail
 
@@ -1603,6 +1732,7 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
 
   - `ez_learn_skill`, `ez_skillify_skill` and `ez_create_skill_skill` belong to the
     `coder_script.stack_skills` map
+  - `tz_probe` to `coder_script.tz_setup`
   - `grok_build_agents` to `coder_script.agents_seed`
   - the fleet's thirteen to `coder_script.stack_fleet`
   - the advisors' seven (`documenter_skill`, `documenter_agent`,

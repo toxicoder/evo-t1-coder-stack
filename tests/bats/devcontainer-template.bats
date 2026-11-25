@@ -52,6 +52,11 @@
 # one closing keyword in the pull request body, a keyword that matches what that
 # pull request settles, a failing-then-passing test as the proof of a bug fix,
 # the close left to the merge, and tracker triage left to a human.
+# It also pins that no repository is prepopulated: neither coder.tf twin defaults
+# repo_url to a URL, no devcontainer preset restates a primary repo_url, the New
+# project preset still carries the stack through additional_repos (that clone is
+# what puts scripts/new-repo.sh in a fresh workspace), and a repository named on the
+# create form still clones into the documented path.
 #
 # Usage: bazelisk test //tests:bats_devcontainer_template_test   (from any cwd)
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
@@ -168,6 +173,57 @@ setup() {
   run grep -F 'if [ -z "$repo_url_raw" ]; then' "${DC_STARTUP}"
   [ "${status}" -eq 0 ]
   run grep -F 'if [ -n "$repo_url_raw" ]; then' "${WS_STARTUP}"
+  [ "${status}" -eq 0 ]
+}
+
+@test "presets: neither devcontainer preset preselects a repository" {
+  # A preset that pins repo_url hands every fresh workspace a clone nobody asked
+  # for, and the create form never shows the field blank. Both presets now pin
+  # only the dev-container toggle, and (data.coder_parameter.<name>) is the shape
+  # a pin takes, so the count below is the whole claim. The descriptions go with
+  # the behaviour: one that still promised the default repository would describe
+  # a clone that cannot happen.
+  local n
+  n="$(grep -c -F 'data.coder_parameter.repo_url.name' "${DC_TF}" || true)"
+  assert_eq "${DC_TF} pins repo_url in no preset" "0" "${n}"
+  n="$(grep -c -F '(data.coder_parameter.use_devcontainer.name) = "true"' "${DC_TF}" || true)"
+  assert_eq "${DC_TF} pins the toggle true in the two dev-container presets" "2" "${n}"
+  n="$(grep -c -F '(data.coder_parameter.use_devcontainer.name) = "false"' "${DC_TF}" || true)"
+  assert_eq "${DC_TF} pins the toggle false in Plain clone" "1" "${n}"
+  run grep -F "the template's default repository" "${DC_TF}"
+  [ "${status}" -ne 0 ]
+  run grep -F "Clone the default repository" "${DC_TF}"
+  [ "${status}" -ne 0 ]
+}
+
+@test "presets: neither coder.tf twin defaults repo_url to a URL" {
+  # With no preset pinning it, the create form's starting value is the coder.tf
+  # default, so a URL there re-prepopulates the field without touching a preset.
+  # The devcontainer twin used to ship https://github.com/coder/coder; the
+  # workspace twin has always shipped empty, and the two stay agreed.
+  local f blank bad
+  for f in "${REPO_ROOT}/templates/devcontainer/coder.tf" "${REPO_ROOT}/templates/workspace/coder.tf"; do
+    [[ -f ${f} ]] || skip "coder.tf twin not reachable from ${REPO_ROOT}"
+    blank="$(awk '/^variable "repo_url" \{/,/^\}/' "${f}" |
+      grep -cE '^[[:space:]]*default[[:space:]]*=[[:space:]]*""[[:space:]]*$' || true)"
+    assert_eq "${f} defaults repo_url to the empty string" "1" "${blank}"
+    bad="$(awk '/^variable "repo_url" \{/,/^\}/' "${f}" |
+      grep -cE '^[[:space:]]*default[[:space:]]*=[[:space:]]*([^"[:space:]]|"[^"])' || true)"
+    assert_eq "${f} gives repo_url no other default" "0" "${bad}"
+  done
+}
+
+@test "presets: New project still carries the stack as additional_repos" {
+  # Emptying the primary default must not reach this preset: the stack clone is
+  # what puts scripts/new-repo.sh in a fresh workspace, and it rides
+  # additional_repos, so the scaffold stays available while the form's primary
+  # repository field stays blank. One pin, in new_project alone.
+  local n
+  n="$(grep -c -F '(data.coder_parameter.additional_repos.name) = var.stack_repo_url' "${DC_TF}" || true)"
+  assert_eq "${DC_TF} pins the stack as an additional repo once" "1" "${n}"
+  run grep -F 'name        = "New project (scaffold ready)"' "${DC_TF}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'Dev container plus this stack' "${DC_TF}"
   [ "${status}" -eq 0 ]
 }
 

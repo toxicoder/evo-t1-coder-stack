@@ -1,0 +1,54 @@
+#!/bin/sh
+# tftpl: coder_script body; the /trunk-refactor payload is interpolated from the map
+# main.tf passes, into a quoted here-doc so no shell text inside it is expanded. Why this
+# seed rides its own script rather than stack-repo-skills.sh.tftpl: the agent execs every
+# body as one argument, so a second body buys a second ceiling, and that family's five
+# members pass it once this payload joins them;
+# docs/coder-templates.md#the-one-argument-ceiling.
+set -u
+
+# The library arrives as one map value main.tf passes. Terraform does not re-interpolate
+# a map value, so its own dollar-brace text lands here verbatim: no here-doc, no temp
+# file, and every comment in this file spells that token out instead of writing it.
+${boot_log_lib}
+
+# Absent-only contract: a file that already exists belongs to the user, so a healthy
+# workspace writes nothing; the log names what it wrote and what it left to the
+# operator. The ~/.coder copy is what the Coder Agents chat reads and the ~/.agents
+# copy what the Grok Build CLI reads; the twin is always a cp of the managed ~/.coder
+# copy, never a second inline body.
+
+boot_begin "trunk refactor command" 1
+
+boot_stage 1 "the repository conversion command"
+
+# /trunk-refactor is the procedure form and sits beside /ez-trunk-based-repo, the
+# philosophy form, for the reason that body's header gives: one converts a repository,
+# the other explains the model it converts to, and a reader who wants one is served by
+# having the other in the same home. Same repository tier, same two homes.
+if [ ! -f "$HOME/.coder/skills/trunk-refactor/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/trunk-refactor" 2>/dev/null
+  cat >"$HOME/.coder/skills/trunk-refactor/SKILL.md" <<'TRUNK_REFACTOR_SKILL_MD_EOF'
+${trunk_refactor_skill}
+TRUNK_REFACTOR_SKILL_MD_EOF
+  boot_ok "trunk-refactor SKILL.md"
+else
+  boot_note "trunk-refactor SKILL.md is the operator's own"
+fi
+
+if [ ! -f "$HOME/.agents/skills/trunk-refactor/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/trunk-refactor" 2>/dev/null
+  cp "$HOME/.coder/skills/trunk-refactor/SKILL.md" \
+    "$HOME/.agents/skills/trunk-refactor/SKILL.md" 2>/dev/null
+fi
+
+# The twin cp runs with its errors quieted, so the outcome is read back instead of
+# trusted: an artifact missing from either home here is a seed that failed quietly.
+for f in trunk-refactor/SKILL.md; do
+  [ -f "$HOME/.coder/skills/$f" ] || boot_warn "no coder copy of $f"
+  [ -f "$HOME/.agents/skills/$f" ] || boot_warn "no agents twin of $f"
+done
+
+boot_summary
+
+exit 0

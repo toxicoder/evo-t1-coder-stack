@@ -20,11 +20,17 @@
 #     seed payloads (GROK_BUILD_AGENTS.md, vscode-alt.svg, notes-setup.sh,
 #     tmux.conf, the two terminal helpers, the Coder Agents skill/instructions,
 #     the ez- skill trio (ez-learn.SKILL.md, ez-skillify.SKILL.md,
-#     ez-create-skill.SKILL.md) and its stack-skills.sh.tftpl seed body, the
-#     repository-command skills (ez-bazel-first.SKILL.md with its two helpers,
-#     ez-strong-types.SKILL.md with its one, ez-micro-plan.SKILL.md with its
-#     one, ez-trunk-based-repo.SKILL.md with none) and their
-#     stack-repo-skills.sh.tftpl seed body, the fleet suite (six agent
+#     ez-create-skill.SKILL.md), the reflect pair (reflect-and-evolve.SKILL.md
+#     with its checklist and its session_signals.py helper,
+#     reflect-and-evolve-repo.SKILL.md with its checklist) and their
+#     stack-skills.sh.tftpl seed body, the repository-command skills
+#     (ez-bazel-first.SKILL.md with its two helpers, ez-strong-types.SKILL.md
+#     with its one, ez-micro-plan.SKILL.md with its one, and
+#     ez-trunk-based-repo.SKILL.md with none) and their
+#     stack-repo-skills.sh.tftpl seed body, trunk-refactor.SKILL.md and its
+#     trunk-refactor-seed.sh.tftpl seed body, which that family needs of its own
+#     because the five payloads together pass the one-argument ceiling, the fleet
+#     suite (six agent
 #     definitions *.AGENT.md, three persona overlays *.PERSONA.toml, four
 #     parent-side skills *.SKILL.md) and its stack-fleet.sh.tftpl seed body,
 #     mcp-cache-proxy.json, the agents-seed.sh.tftpl body that writes
@@ -78,12 +84,19 @@ fi
 # ez-bazel-first.glob_budget.py, ez-strong-types.SKILL.md,
 # ez-strong-types.type_baseline.py, ez-trunk-based-repo.SKILL.md,
 # ez-micro-plan.SKILL.md, ez-micro-plan.plan_check.py,
+# stack-repo-commands.SKILL.md,
+# reflect-and-evolve.SKILL.md, reflect-and-evolve.session_signals.py,
+# reflect-and-evolve.checklist.md, reflect-and-evolve-repo.SKILL.md,
+# reflect-and-evolve-repo.checklist.md, trunk-refactor.SKILL.md,
 # explorer.AGENT.md, architect.AGENT.md, implementer.AGENT.md, tester.AGENT.md,
 # reviewer.AGENT.md, security-auditor.AGENT.md,
 # thorough-researcher.PERSONA.toml, senior-implementer.PERSONA.toml,
 # skeptical-reviewer.PERSONA.toml, feature-implementation.SKILL.md,
 # skeptical-review.SKILL.md, security-audit.SKILL.md, bug-hunt.SKILL.md,
 # stack-repo-skills.sh.tftpl, terminal-launchers.sh.tftpl, stack-fleet.sh.tftpl,
+# stack-workflows.sh.tftpl (the coder_script "stack_workflows" body) with the four
+# workflow modules it inlines (debug-fix.workflow.js, fleet-verify.workflow.js,
+# implement-reviewed.workflow.js, open-bugs.workflow.js),
 # coder-agents.md,
 # mcp-cache-proxy.json, agents-seed.sh.tftpl (the coder_script "agents_seed" body) and
 # gh-token-refresh.sh.tftpl and infisical-secrets.sh.tftpl (the
@@ -156,6 +169,13 @@ template_push_one() {
     ez-trunk-based-repo.SKILL.md \
     ez-micro-plan.SKILL.md \
     ez-micro-plan.plan_check.py \
+    stack-repo-commands.SKILL.md \
+    reflect-and-evolve.SKILL.md \
+    reflect-and-evolve.session_signals.py \
+    reflect-and-evolve.checklist.md \
+    reflect-and-evolve-repo.SKILL.md \
+    reflect-and-evolve-repo.checklist.md \
+    trunk-refactor.SKILL.md \
     explorer.AGENT.md \
     architect.AGENT.md \
     implementer.AGENT.md \
@@ -189,10 +209,18 @@ template_push_one() {
     agents-seed.sh.tftpl \
     stack-skills.sh.tftpl \
     boot-log.lib.sh \
+    tz-setup.sh.tftpl \
+    tz.sh \
     terminal-launchers.sh.tftpl \
     stack-repo-skills.sh.tftpl \
+    trunk-refactor-seed.sh.tftpl \
     stack-advisors.sh.tftpl \
     stack-hooks.sh.tftpl \
+    stack-workflows.sh.tftpl \
+    debug-fix.workflow.js \
+    fleet-verify.workflow.js \
+    implement-reviewed.workflow.js \
+    open-bugs.workflow.js \
     stack-fleet.sh.tftpl; do
     if [ ! -f "${common}/${payload}" ]; then
       printf 'error: %s: %s/%s is missing - main.tf reads it from the pushed copy, so no push works without it\n' \

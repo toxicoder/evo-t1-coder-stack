@@ -62,8 +62,13 @@ duplicate mechanism costs a whole phase:
     git ls-files | grep -Ei 'BUILD|\.bzl$|Makefile$|setup-host|bootstrap' | head -20
     git ls-files 'scripts/*' 'tools/*' | grep -iE 'map|invent|coverage|deps' | head
 
-Look for an existing "which files are unclaimed" verb (here it is
-`bazelisk run //scripts:bazel-map -- unlisted <dir>`).
+Look for an existing "which files are unclaimed" verb, and discover its label rather
+than assume one -- the package and the target name are that repo's own:
+
+    bazelisk query 'attr(srcs, "<dir>", //...:*)' --output=label | head -20
+
+Whatever target claims a filegroup today is the one that asks the question; if the repo
+has a dedicated verb for it, the query shows you its label.
 
 Use the repo's own when it exists and wire it into the gate; reach for the shipped
 `scripts/owned_files_check.py` only when nothing asks the question.
@@ -75,7 +80,7 @@ A guessed target label wastes a turn on `ERROR: no such target`; a query costs n
 ### Confirm the bootstrap script
 
 The toolchain usually ships as a golden image plus one shell-run bootstrap script.
-Confirm it exists and is honest; `//:lint`-style gates commonly SKIP a missing linter
+Confirm it exists and is honest; an aggregate `<lint-target>`-style gate commonly SKIPs a missing linter
 and go green having checked nothing.
 
     grep -n 'command -v\|check_tool\|REQUIRE_LINT_TOOLS\|CI' lints/*.sh scripts/*.sh 2>/dev/null | head -20
@@ -103,7 +108,7 @@ Run it with `run_terminal_command` and quote the output.
 
 Start with the check, not the fix.
 
-    python3 ~/.agents/skills/ez-bazel-first/scripts/owned_files_check.py --root <repo>
+    python3 <repo_root>/.grok/skills/ez-bazel-first/scripts/owned_files_check.py --root <repo>
 
 It maps labels to paths and reports `summary: N tracked | M target-owned | K
 control-plane | L ledger-excluded (reasoned) | U unowned`.
@@ -145,7 +150,7 @@ Omit the manifest and the check passes while reading nothing.
 
 ## Step 3 -- make targets explicit, and ratchet the globs
 
-    python3 ~/.agents/skills/ez-bazel-first/scripts/glob_budget.py --root <repo> --max <count>
+    python3 <repo_root>/.grok/skills/ez-bazel-first/scripts/glob_budget.py --root <repo> --max <count>
 
 Set `--max` to the count it reports, so the budget can only shrink. Every surviving
 `glob(` needs `# glob-policy: <reason>` nearby.
@@ -189,8 +194,10 @@ than guessing which files are docs:
 
 ### Rewrite every hit
 
-Rewrite each hit to `bazelisk run //scripts:<stem> -- <args>`. Cover the four surfaces
-the request asks for:
+Rewrite each hit to the target that owns that script, with the label read off the repo
+and not guessed -- `bazelisk query 'rdeps(//..., "<path>")' --output=label` names it, and
+you run it as `bazelisk run <label> -- <args>`. Do not assume the package a repo keeps its
+operator CLIs in. Cover the four surfaces the request asks for:
 
 - prose docs.
 - docstrings and `# @function` blocks.

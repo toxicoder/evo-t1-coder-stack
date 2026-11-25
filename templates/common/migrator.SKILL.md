@@ -54,14 +54,20 @@ appears:
 
 ### Where the pin lives here
 
-Here the pin lives in `images/dev/tool-versions.env` and its mirror in `images/dev/Dockerfile`:
+Discover this repository's own pin before you edit anything -- `git ls-files | grep -Ei
+'versions\.env|tool-versions|Dockerfile|lock|package\.json|Makefile'` -- and the CI step that
+re-checks it, then name every place the old number repeats, each with its `path:line`:
 
-- each key there must also be an `ARG` in the Dockerfile
-  or `//tests:bats_image_test` fails (`tests/bats/image.bats:25`)
-- `scripts/lib/tool_pins.sh` turns the same keys into host download URLs, so a rename strands CI
+- a pin mirrored elsewhere (a `Dockerfile` `ARG` default, a generated manifest) fails a drift test
+  rather than warning, so read that test before the bump
+- a helper that derives URLs, checksums, or image tags from the same keys strands CI on a rename;
+  `git grep -n "<old version>"` over the tracked tree is what finds it
 
-Bumping those two files is the whole dependency update -- the contributor container needs no edit
-because `devcontainer.json` `cacheFrom`s the image built there.
+`evo-t1-coder-stack` is one answer to this step, not the answer for every repo: there the pin is
+`images/dev/tool-versions.env` mirrored by `ARG` defaults in `images/dev/Dockerfile`, and the image
+test at `tests/bats/image.bats:25` is what refuses the drift. Bumping the pin files may be the whole
+dependency update: check whether a dev container or CI image `cacheFrom`s or builds from them,
+because that decides whether anything else has to move.
 
 ## Phase 2 -- the delta, from a lane and not from memory (1 to 3 calls)
 
@@ -110,7 +116,8 @@ Hotspots stay with the parent:
 - snapshots
 - a barrel or registry
 - migration order
-- here the `tool-versions.env` plus `Dockerfile` pair, which move as one unit
+- the pin pair this repo mirrors, which moves as one unit (in `evo-t1-coder-stack`:
+  `tool-versions.env` plus `Dockerfile`)
 
 Bump only; take the call-site changes the new API forces and leave the rest for the next branch.
 
@@ -134,8 +141,10 @@ section of `templates/common/GROK_BUILD_AGENTS.md` states: nothing merges on the
 - The rollback is rehearsed, not assumed: an untested rollback is a hope with a commit attached.
 - Never introduce a new dependency to fix an old one without saying so -- plan, commit body, PR --
   and why the existing toolchain cannot do it.
-- A pin that cannot be reproduced from a clean image is a failure: after the bump run
-  `bazelisk run //:fix`, `bazelisk test //:lint --test_tag_filters=manual`, then a no-cache rebuild.
+- A pin that cannot be reproduced from a clean image is a failure: after the bump run this repo's own
+  format step, its own lint step, then a no-cache rebuild -- discover both from the nearest
+  `BUILD.bazel` (`bazelisk query 'kind(test, //...:all)'`), the `scripts` map in `package.json`, the
+  `Makefile`'s target list, or the job steps in `.github/workflows`.
 - Pure ASCII in everything you write, the diff, the plan, and the commit message included.
 
 ## Done means
@@ -146,7 +155,7 @@ no merge; rollback unexercised, no merge.
     # pin: git diff --stat main...HEAD names only the pin files, whose diff is the only version
     #      change in the tree
     # prove: the one command from Phase 3, its output pasted verbatim into the pull request
-    bazelisk test //:test-fast
-    bazelisk test //:lint --test_tag_filters=manual
+    <the repo's own gate command, cache disabled>    # discovered per Hard rules; output quoted
+    <the repo's own lint command>                    # same discovery
     # skeptic on agent-review: re-ran both gates and the rollback; every claim kept or broken
     # rollback: the reverse patch ran once, the proving command passed, status is clean

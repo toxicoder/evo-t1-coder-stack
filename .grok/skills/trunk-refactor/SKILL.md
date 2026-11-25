@@ -1,1 +1,1 @@
-../../../skills/trunk-refactor/SKILL.md
+../../../templates/common/trunk-refactor.SKILL.md

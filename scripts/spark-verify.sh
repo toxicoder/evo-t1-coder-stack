@@ -11,6 +11,8 @@
 #   bazelisk run //scripts:spark-verify -- --json                    # one JSON object per host
 #   bazelisk run //scripts:spark-verify -- --no-tests <host>         # skip the recipe's own probes
 #   bazelisk run //scripts:spark-verify -- --needle <host>            # also run the 195k needle on a busy box
+#   bazelisk run //scripts:spark-verify -- --expect-down spark-3.lan  # that box is off on purpose: skip it, do not fail on it
+#   bazelisk run //scripts:spark-verify -- --tolerate-unreachable 1   # allow up to N boxes that answer nothing, unnamed
 #   VISION=1 bazelisk run //scripts:spark-verify -- <host>            # also run visioncheck.py
 #   SPARK_HOSTS="host1 host2" bazelisk run //scripts:spark-verify    # process env; overrides the .env-derived fleet
 #
@@ -65,12 +67,23 @@
 #      its pinned workspaces keep riding on it and new sessions still land on
 #      it, and it answers with a degraded or wrong completion instead of an error.
 #
-# Unreachable is not a failure. A host that does not answer — no DNS entry (a default
-# fleet derived from .env can name placeholder hostnames, which never resolve), no
-# route, no ssh credentials, or a box with no server on it — prints WHY and still exits
-# 0, because that is a "not yet" state and re-running bazelisk run //scripts:spark-verify is the recovery path.
-# Exit 1 means a box that COULD be reached disagrees with the fleet's contract or with
-# one of its peers.
+# Unreachable is a verdict, not a note: DOWN. A host that answers nothing on :8888 and
+# opens no ssh session -- no DNS entry, no route, no ssh credentials, a box that is
+# switched off or mid-reboot -- is a box the proxy is routing around while this run
+# prints. It reads as DOWN, it is counted in the summary beside the unreachable total,
+# and it fails the run, because a green-looking summary over a dead box is what hid the
+# failover. Two escapes name a box an operator took out deliberately, both repeatable:
+#   --expect-down <host>          that box is skipped, not failed; it is still probed and
+#                                 printed, and it joins nothing in the drift comparison
+#   --tolerate-unreachable <N>    allow up to N boxes that answer nothing, unnamed
+# One fleet keeps the old "not yet" behaviour and exits 0: a host list that is nothing but
+# the shipped spark-<n>.lan placeholders. Those names never resolve, nothing routes to
+# them, and no failover is in flight, so an unanswered probe there means "not configured
+# yet" and the run says so and stays green. Any other name is an address somebody wrote
+# down, and a box behind it that answers nothing is DOWN.
+# Exit 1 therefore means one of three things: a box could not be reached and nobody
+# accounted for it, or a box that COULD be reached disagrees with the fleet's contract, or
+# it disagrees with one of its peers.
 #
 # The same object is written to sparks/<host>.jsonl, one per host: gitignored
 # generated state holding this run's answer, and printed to stdout with --json as well,
@@ -109,6 +122,11 @@ drift_keys="model_id_seen served_name parallel streams_max context_length contex
 
 tests=1
 needle_flag=""
+# Boxes an operator took out on purpose (--expect-down), and how many unanswered probes
+# the run tolerates without being told which (--tolerate-unreachable). Both keep a dead box
+# out of the exit code; neither hides it from the report.
+expect_down=""
+unreachable_ok=0
 ssh_user="${SPARK_SSH_USER:-${LOGNAME:-}}"
 ssh_port=22
 server_port=8888
@@ -136,6 +154,23 @@ while [ "$#" -gt 0 ]; do
       # the server's warm prompt state to fit 195k unseen tokens; see the header.
       needle_flag=1
       shift
+      ;;
+    --expect-down)
+      # A box the operator took out deliberately: it stays probed, printed and counted as
+      # unreachable, and it is a SKIP instead of a DOWN. Repeatable, one host per flag.
+      [ "$#" -ge 2 ] || die "--expect-down needs a host name"
+      expect_down="${expect_down} $2"
+      shift 2
+      ;;
+    --tolerate-unreachable)
+      # How many unanswered probes may pass unnamed. It is a count, not a name, because
+      # the run already counts hosts_unreachable / hosts_failed per box.
+      [ "$#" -ge 2 ] || die "--tolerate-unreachable needs a value"
+      case "$2" in
+        '' | *[!0-9]*) die "--tolerate-unreachable needs a whole number of hosts, got '$2'" ;;
+      esac
+      unreachable_ok="$2"
+      shift 2
       ;;
     --user)
       [ "$#" -ge 2 ] || die "--user needs a value"
@@ -168,7 +203,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     -h | --help)
-      sed -n '2,66p' "$0"
+      sed -n '2,86p' "$0"
       exit 0
       ;;
     -*)
@@ -222,6 +257,18 @@ if [ "${#hosts[@]}" -eq 0 ]; then
     fi
   fi
 fi
+
+# A fleet that is nothing but the shipped placeholders is not a fleet yet: every name is
+# one .env.sample ships, none of them resolves, and nothing routes to them, so an
+# unanswered probe is "not configured yet" and keeps exit 0. Any other name is an address
+# somebody wrote down, and a box behind it that answers nothing is DOWN (see the header).
+fleet_is_placeholder=1
+for host in ${hosts[@]+"${hosts[@]}"}; do
+  case "${host}" in
+    spark-[0-9].lan) ;;
+    *) fleet_is_placeholder="" ;;
+  esac
+done
 
 # A SPARKn_OLLAMA_URL left in .env from the Spark-Ollama era names a box that nothing
 # reads any more: the key stopped feeding the host list, so that box quietly left the
@@ -371,6 +418,11 @@ fi
 hosts_checked=0
 hosts_unreachable=0
 hosts_failed=0
+# The two halves of hosts_unreachable: a dead box nobody accounted for, and one the
+# operator named with --expect-down. Only the first can fail the run.
+hosts_down=0
+hosts_expected_down=0
+down_hosts=""
 
 for host in ${hosts[@]+"${hosts[@]}"}; do
   # section/phase go through log, so --json keeps them on stderr and stdout stays
@@ -533,20 +585,35 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # One decision per host, taken before anything is printed, so the human lines, the
   # --json object and sparks/<host>.jsonl all describe the same measurement.
   #
-  # A host that answered on no port and opened no ssh session is a "not yet" box:
-  # nothing was compared, so nothing can be claimed about it. That is a skip, printed
-  # with the reason, and it does not touch the exit code — the same graceful-degradation
-  # contract bootstrap.sh follows, and the reason this script is safe to run on a fleet
-  # where one box is switched off.
+  # A host that answered on no port and opened no ssh session is a box that is OFF, and a
+  # box that is off is traffic failing over: that is a verdict (DOWN), it is counted, and
+  # it fails the run. Two things excuse it -- the operator naming the box with
+  # --expect-down, or a fleet that is still nothing but the shipped placeholders, where
+  # there is no box yet to be down.
   failed_here=""
   reachable=true
   verdict=OK
   detail=""
+  expected_down=""
+  case " ${expect_down} " in
+    *" ${host} "*) expected_down=1 ;;
+  esac
   if [ "${model_served}" = unmeasurable ]; then
     reachable=false
-    verdict=SKIP
-    detail="nothing answered on :${server_port} and no ssh session opened either (${ssh_note}) — nothing was verified on this box, and that is a \"not yet\" state rather than a failure: a Spark that is switched off, has no server on it, or is not an ssh target from this box cannot disagree with its peers"
     hosts_unreachable=$((hosts_unreachable + 1))
+    if [ -n "${expected_down}" ]; then
+      verdict=SKIP
+      detail="nothing answered on :${server_port} and no ssh session opened either (${ssh_note}) -- named with --expect-down, so this box is out of the fleet on purpose: it is skipped, not failed, and it joins nothing in the peer comparison"
+      hosts_expected_down=$((hosts_expected_down + 1))
+    elif [ -n "${fleet_is_placeholder}" ]; then
+      verdict=SKIP
+      detail="nothing answered on :${server_port} and no ssh session opened either (${ssh_note}) -- ${host} is a shipped spark-<n>.lan placeholder, not an address, so this stays a \"not yet\" state rather than a failure: pass your real Spark hostnames or set SPARK_HOSTS"
+    else
+      verdict=DOWN
+      detail="nothing answered on :${server_port} and no ssh session opened either (${ssh_note}) -- the box is DOWN and traffic is failing over around it. The proxy's health filter is the only thing that pulls a dead box out of rotation: enable_health_check_routing in general_settings drives the unhealthy-deployment filter the chat path runs before least-busy picks a box (docs/litellm-routing.md:806). Cooldown cannot -- a box that is simply switched off raises APIConnectionError, which cooldown_handlers lists in ignored_strings, so it never cools. Until that filter marks the box, least-busy still hands it new sessions and each one pays the retry. Read the filter's own view at the proxy's /health/readiness, and the box itself with docker ps / docker logs ${container}; if you took it out on purpose, re-run with --expect-down ${host}"
+      hosts_down=$((hosts_down + 1))
+      down_hosts="${down_hosts}${down_hosts:+ }${host}"
+    fi
   elif [ "${model_served}" != exact ]; then
     verdict=FAIL
     detail="answers /v1/models with \"${model_seen}\" instead of \"${model_id}\" — LiteLLM sends the id verbatim and drops this deployment at boot, so the fleet reads \"No deployments available\" and nothing that looks like an error"
@@ -588,6 +655,14 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     *) routing="no SPARKn_OPENAI_URL to compare (no .env here, or all three are empty)" ;;
   esac
 
+  # --expect-down on a box that answered is an excuse nobody needs any more: the box is
+  # back, and the next run that trusts the flag would ride a dead one. Advisory either way.
+  if [ -n "${expected_down}" ] && [ "${reachable}" = true ]; then
+    warn "${host} was named with --expect-down but answered on :${server_port} -- it is back; drop the flag or take it out again"
+  fi
+  expected_down_json=false
+  [ -z "${expected_down}" ] || expected_down_json=true
+
   if [ -z "${JSON_MODE:-}" ]; then
     if [ "${verdict}" = OK ]; then
       log "${host} — serving ${model_id}"
@@ -604,13 +679,13 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # compares, written once and read back for stdout so the two cannot disagree and a run
   # piped into jq answers the same question the human output does. sparks/ is
   # gitignored generated state: this file holds this run's answer, not a log.
-  printf '{"host":"%s","reachable":%s,"verdict":"%s","probed_via":"%s","model_id":"%s","served":%s,"health":"%s","requests_running":%s,"streams_max":%s,"context_length":%s,"image":"%s","kv_dtype":"%s","parallel":"%s","detail":"%s"}\n' \
+  printf '{"host":"%s","reachable":%s,"verdict":"%s","probed_via":"%s","model_id":"%s","served":%s,"health":"%s","requests_running":%s,"streams_max":%s,"context_length":%s,"image":"%s","kv_dtype":"%s","parallel":"%s","detail":"%s","expected_down":%s}\n' \
     "${host}" "${reachable}" "${verdict}" \
     "$(json_escape "${ssh_note}")" "${model_id}" "$(json_value "${model_served}")" \
     "$(json_escape "${health_state}")" "$(json_value "${requests_running}")" \
     "$(json_value "${streams_max}")" "$(json_value "${context_length}")" \
     "$(json_escape "${seen_image}")" "$(json_escape "${seen_kv}")" \
-    "$(json_escape "${seen_parallel}")" "$(json_escape "${detail}")" >"${work}/${host}.jsonl"
+    "$(json_escape "${seen_parallel}")" "$(json_escape "${detail}")" "${expected_down_json}" >"${work}/${host}.jsonl"
 
   if [ -n "${JSON_MODE:-}" ]; then
     cat "${work}/${host}.jsonl"
@@ -657,16 +732,44 @@ if [ -n "${drift}" ]; then
   exit 1
 fi
 
+# A name the operator passed to --expect-down that is not in the fleet excuses nothing: a
+# typo there would leave a real dead box failing the run with the operator believing it
+# was accounted for.
+for wanted in ${expect_down}; do
+  matched=""
+  for host in ${hosts[@]+"${hosts[@]}"}; do
+    [ "${host}" != "${wanted}" ] || matched=1
+  done
+  [ -n "${matched}" ] || warn "--expect-down ${wanted} names no host in this fleet (${hosts[*]+"${hosts[*]}"}) -- nothing is excused by it and an unanswered probe still fails the run"
+done
+
+# -- the down verdict ---------------------------------------------------------
+# A box that answered nothing is traffic failing over, so it fails the run unless the
+# operator accounted for it. Printed ahead of the summary, which stays the last thing read.
+if [ "${hosts_down}" -gt "${unreachable_ok}" ]; then
+  log ""
+  log "FAIL: ${hosts_down} box(es) answered nothing on :${server_port} and are DOWN (${down_hosts}) -- ${hosts_expected_down} were expected down and ${unreachable_ok} unanswered probe(s) are tolerated"
+  log 'note: the health filter is what pulls a dead box out of rotation -- enable_health_check_routing in general_settings drives the unhealthy-deployment filter the chat path runs before least-busy picks a box (docs/litellm-routing.md:806). Cooldown cannot: a box that is simply switched off raises APIConnectionError, which cooldown_handlers lists in ignored_strings, so it never cools, and until that filter marks the box least-busy keeps handing it new sessions.'
+  log "note: read the proxy's own view at its /health/readiness, and the box itself with docker ps / docker logs ${container} on ${down_hosts}; bazelisk run //scripts:spark-configure -- <host> reads one that does answer."
+  log "note: took one out on purpose? bazelisk run //scripts:spark-verify -- --no-tests --expect-down <host> --expect-down <other>, or allow N unnamed with --tolerate-unreachable N."
+fi
+
 if [ "${hosts_checked}" = "${#hosts[@]}" ] && [ "${hosts_unreachable}" != "${hosts_checked}" ]; then
   log ""
-  log "summary: ${hosts_checked} of ${#hosts[@]} host(s) checked (${hosts_unreachable} unreachable) and ${hosts_failed} failed — see the lines above"
+  log "summary: ${hosts_checked} of ${#hosts[@]} host(s) checked (${hosts_unreachable} unreachable, ${hosts_down} down, ${hosts_expected_down} expected down) and ${hosts_failed} failed -- see the lines above"
 elif [ "${hosts_unreachable}" = "${hosts_checked}" ]; then
   log ""
   log "summary: no Spark answered on :${server_port} and no ssh session opened, so nothing was verified"
-  log "note: none of the ${#hosts[@]} host(s) could be reached — check SPARK_HOSTS (spark-1.lan/2/3 are placeholders, not addresses) or pass --user/--port; this is a \"not yet\" state, so the exit code stays 0"
+  if [ -n "${fleet_is_placeholder}" ]; then
+    log "note: none of the ${#hosts[@]} host(s) could be reached and every one is a shipped spark-<n>.lan placeholder, not an address -- check SPARK_HOSTS (spark-1.lan/2/3 are placeholders, not addresses) or pass --user/--port; this is a \"not yet\" state, so the exit code stays 0"
+  elif [ "${hosts_down}" -gt "${unreachable_ok}" ]; then
+    log "note: none of the ${#hosts[@]} host(s) could be reached -- every box in the fleet is DOWN, and the proxy's health filter (enable_health_check_routing in general_settings, docs/litellm-routing.md:806) is what has to clear it. Read the proxy's /health/readiness and the boxes themselves, or account for the run with --expect-down <host> / --tolerate-unreachable N"
+  else
+    log "note: none of the ${#hosts[@]} host(s) could be reached and every one is accounted for by --expect-down / --tolerate-unreachable, so this stays green -- drop the flags once the boxes are back, or a genuinely dead one will pass unseen"
+  fi
 fi
 
-if [ "${hosts_failed}" != 0 ]; then
+if [ "${hosts_down}" -gt "${unreachable_ok}" ] || [ "${hosts_failed}" != 0 ]; then
   exit 1
 fi
 exit 0

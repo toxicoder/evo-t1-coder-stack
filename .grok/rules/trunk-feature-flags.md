@@ -5,8 +5,9 @@
 These constraints apply to every change in this repository and to any repository this agent is
 asked to convert.
 
-- The full procedure is the `trunk-refactor` skill
-  (`skills/trunk-refactor/SKILL.md`, reachable as `/trunk-refactor`)
+- The full procedure is the `trunk-refactor` skill, whose tracked body is
+  `templates/common/trunk-refactor.SKILL.md`; this repository reaches it as
+  `.grok/skills/trunk-refactor/SKILL.md`, invoked as `/trunk-refactor`
 - The prose is `docs/workflows/trunk-feature-flags-refactor.md`
 - The rule of record is `docs/branching.md`
 

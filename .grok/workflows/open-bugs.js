@@ -1,0 +1,1 @@
+../../templates/common/open-bugs.workflow.js

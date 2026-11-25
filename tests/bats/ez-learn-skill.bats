@@ -672,10 +672,27 @@ if "user-invocable" in data and data["user-invocable"] is not True:
   [ -f "${probe}" ] || skip "the retire probe is not in the tree"
   # shellcheck source=/dev/null
   source "${lib}"
-  local retired
+  local retired rows files dup
   retired="$(seed_retired_targets)"
-  assert_eq "one retired target per skill consumer" "2" \
-    "$(printf '%s\n' "${retired}" | grep -c .)"
+  rows="$(printf '%s\n' "${retired}" | grep -c .)"
+  # One retired target per skill consumer: the seed lays every payload under two homes, so each
+  # retired file owes exactly one row per home and no row may sit outside them. The file set
+  # grows with the payloads the seed retires - ez-bazel-first came with two scripts/ helpers -
+  # so the expectation is read off the rows themselves rather than pinned to one number that a
+  # later payload would have to chase. A row under a third home never matches the sed and shows
+  # up as a count that no longer divides.
+  files="$(printf '%s\n' "${retired}" |
+    sed -n -E 's#^~/\.(coder|agents)/skills/(.*)$#\2#p' | sort -u | grep -c .)"
+  [ "${files}" -gt 0 ] || {
+    printf 'FAIL: no retired target sits under a skill home: %s\n' "${retired}" >&2
+    return 1
+  }
+  assert_eq "one retired target per skill consumer" "$((2 * files))" "${rows}"
+  dup="$(printf '%s\n' "${retired}" | sort | uniq -d)"
+  [ -z "${dup}" ] || {
+    printf 'FAIL: a retired target is named twice: %s\n' "${dup}" >&2
+    return 1
+  }
   assert_match "the coder copy is retired" '^~/\.coder/skills/learn/SKILL\.md$' "${retired}"
   assert_match "the agents copy is retired" '^~/\.agents/skills/learn/SKILL\.md$' "${retired}"
   # A rename reaches into a home on the strength of the marker, never the path

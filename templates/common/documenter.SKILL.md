@@ -67,20 +67,27 @@ Given only a wish to document something, stop and ask which change.
 Fan out read-only mappers on `agent-explore`, the lane for pure mapping, one per surface; each
 returns numbered claims carrying `path:line` and the document that is now wrong, and edits nothing:
 
-- the operator docs under `docs/`, plus the `docs-site/` nav a new page has to join
+- the operator docs, wherever this repo keeps them -- `git ls-files | grep -Ei
+  '^(docs|documentation|guide|manual|site)/' | head` names them, with whatever nav or sidebar
+  file a new page has to join
 - the README command list, the surface a reader types from first
-- the rulebook section `templates/common/GROK_BUILD_AGENTS.md`, which the boot writes into
-  `~/.grok/AGENTS.md` while it carries its marker
-- the inline comments and `# @function` blocks in `scripts/**/*.sh`, gated by
-  `//tests:doc_coverage` (`tests/BUILD.bazel:737-743`)
+- the agent rulebook this repo keeps, if it keeps one: in `evo-t1-coder-stack` that is
+  `templates/common/GROK_BUILD_AGENTS.md`, which the boot writes into `~/.grok/AGENTS.md`
+  while it carries its marker
+- the inline comments and doc blocks the repo's own doc-coverage step checks -- name that step
+  from `bazelisk query 'kind(test, //...:all)'`, the `scripts` map in `package.json`, `make -n`,
+  or the CI job list; `evo-t1-coder-stack` gates the `# @function` blocks under `scripts/`
 
 ### The twin and the owner
 
 A mapper that quotes no line did not read the file; send it back.
 
 Ask each one for the twin and
-the owner too: `bazelisk run //scripts:bazel-map -- twins <path>` names the payload copy that
-moves with a template file, and `-- owners <new-page>` proves a gate can see the new page.
+the owner too: which other copy of the file has to move with it (a template or fixture twin, a
+generated mirror, a vendored second path), and which build target's `srcs` can see a new file at all.
+Discover both rather than assuming a helper exists -- `bazelisk query 'rdeps(//..., <path>)'` plus the
+filegroups in the nearest `BUILD.bazel` answer it in a Bazel repo; the `files` list in `package.json`,
+the `Makefile`, and the CI workflow's file lists answer it elsewhere.
 
 ## Step 3 -- Write: one writer per documentation file, disjoint paths (1 call per file)
 
@@ -125,8 +132,9 @@ Then you fix what broke and it re-runs it:
 
 - Never document a command you did not run: a stale invocation in an operator doc is a support
   ticket with a filename on it.
-- Never invent a flag, a path, or a target name -- derive it with `ls`, `find`,
-  `bazelisk query '//tests:all'`, or `bazelisk run //scripts:bazel-map -- targets <spec>`.
+- Never invent a flag, a path, or a target name -- derive it from the repository in front of you:
+  `ls`, `find`, `bazelisk query 'kind(rule, //...:all)'` where `BUILD.bazel` files exist,
+  `jq -r '.scripts | keys[]' package.json`, `make -n`, or the step names in `.github/workflows`.
 - Every new fact traces to the diff or to a file a mapper cited with `path:line`; what the
   author meant is not evidence.
 - Prose and commands are ASCII, punctuation included
@@ -138,10 +146,12 @@ Then you fix what broke and it re-runs it:
 - [ ] `git diff --stat main...HEAD` names only the documentation files this run claimed.
 - [ ] Every command line a changed doc names was executed, with its output quoted in the pull
       request beside the file that tells the reader to run it.
-- [ ] `bazelisk test //tests:doc_coverage` passes: the `# @function` gate over `scripts/**/*.sh`
-      per `tests/BUILD.bazel:737-743` (there is no `//tests:bats_doc_coverage_test`).
-- [ ] `bazelisk test //tests:bats_manage_docs_test` and `bazelisk run //docs:verify` pass when
-      the change touched pages under `docs/` (`bazelisk run //docs-site:install` first if the
-      site's dependencies are absent).
+- [ ] The repository's own doc-coverage step passes -- whichever step in `BUILD.bazel`,
+      `package.json` scripts, the `Makefile`, or the CI job list checks the doc blocks over its
+      sources (in `evo-t1-coder-stack`, the `# @function` gate over `scripts/**/*.sh`); name the
+      command you discovered and paste its output.
+- [ ] The docs build, link check, and nav check pass when the change touched documentation pages --
+      the step the CI workflow names for docs, run after whatever installs that site's
+      dependencies.
 - [ ] The skeptic on `agent-review` returned no broken claim, carrying the output it got for
       each command it ran.

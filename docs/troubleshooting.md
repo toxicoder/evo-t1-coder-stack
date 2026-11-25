@@ -2394,12 +2394,16 @@ bazelisk run //scripts:new-workspace -- <git-url>
 ### A copy from an app inside a tmux pane never reaches the laptop clipboard in VS Code Web -> the browser build drops OSC 52
 
 Cause: an app inside the pane - vim's `+` register, anything that emits OSC 52 -
-pushes its copy out through the pane, `set-clipboard on` with
-`allow-passthrough on` forwards it, and code-server's terminal hands the escape to
-nobody.
+pushes its copy out through the pane, `set-clipboard on` forwards it, and
+code-server's terminal hands the escape to nobody. `allow-passthrough` is no part of
+that route: the seed ships it off and the escape still arrives, measured on the
+shipped tmux 3.4 with a read-only client attached, where OSC 52 reaches that client
+with passthrough off and reaches nowhere with `set-clipboard off`.
 
-There is no setting for it: the shipped 4.145.0 registers no OSC 52 key,
-and upstream
+There is no setting for it: no OSC 52 key was registered in the 4.145.0 build
+that was inspected, and that reading has not been repeated on the 4.145.2 the
+templates pin now - treat it as a 4.145.0 measurement, not as a claim about the
+current build. Upstream
 [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
 open with two unmerged fixes.
 
@@ -2409,7 +2413,38 @@ same copy lands, which puts the drop in the browser and not in tmux.
 ```sh
 tmux show-options -g mouse           # off: the client keeps the click, so a drag is yours
 tmux show-options -g set-clipboard   # on: the tmux end of the pane app's OSC 52 route
+tmux show-options -gw allow-passthrough # off: a DCS-wrapped pane sequence stays out
 ```
+
+The symptom `allow-passthrough` does own is a TUI that starts painting garbage or
+flickering after a while: with it on, a visible pane ships its raw DCS-wrapped
+sequences straight out to the terminal, unrendered and unbudgeted, so whatever the
+pane's program emits lands in the stream every repaint is painted from. Press
+`Prefix p` in the window that runs the app to flip it there alone, and read it back
+with the command above. Neither value changes the symptom this entry answers.
+
+When the flicker is not passthrough, read the counter tmux keeps for it. Upstream
+[`tty.c` at 3.4](https://github.com/tmux/tmux/blob/3.4/tty.c#L210-L247) drops the
+bytes it has queued for a client as soon as that client's own fd cannot drain about
+eight screens of them (`tty_block_maybe`, `TTY_BLOCK_START = 1 + sx*sy*8`), and when
+the queue later falls back below the stop threshold the same file forces a whole
+screen redraw. Output is cut mid-escape-sequence, then repainted: a screen that
+stalls, jumps and flashes. Nothing in tmux says so out loud - the only reaction in
+that code path is a `log_debug` - and `#{client_discarded}` is the byte count of
+what it threw away:
+
+```sh
+tmux list-clients -F '#{client_tty} #{session_name} written=#{client_written} discarded=#{client_discarded}'
+```
+
+A client that keeps up sits at `discarded=0` forever; this workspace's own long-lived
+TUI client measured `written=240312137 discarded=51272122`, which is the flicker
+counted. The thresholds are compile-time macros computed from the client's geometry,
+so no tmux option raises them - the levers are the ones the seed already takes, each
+one a smaller stream per client: `mouse off`, `status-interval 60`, `set-titles off`,
+`allow-passthrough off`, one pane per visible terminal. A client already deep in the
+cycle does not recover from the inside: close that tab and open another, and the new
+client starts at zero.
 
 Fix: there is nothing to turn on in tmux.
 
@@ -2419,9 +2454,10 @@ reporting (measured on the shipped tmux 3.4: an attach with `mouse on` writes
 `ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the client, one with it off writes
 none)
 - the settings seed's `terminal.integrated.copyOnSelection: true` puts
-that highlight on the machine clipboard with no chord (the headless harness on
-4.145.0 recorded `navigator.clipboard.writeText` firing on a client selection,
-before this switch).
+that highlight on the machine clipboard with no chord (the headless harness
+recorded `navigator.clipboard.writeText` firing on a client selection, before
+this switch - that pass ran on 4.145.0 and has not been repeated on the 4.145.2
+the templates pin now).
 
 Right-click pastes
 it back (`terminal.integrated.rightClickBehavior: "copyPaste"` pastes when nothing
@@ -3212,8 +3248,9 @@ infisical: skipped a secret whose value spans more than one line; only single-li
 
 ### `Refusing to bind dashboard to 0.0.0.0` -> empty Hermes basic-auth env
 
-Cause: Hermes v0.22.5 refuses a non-loopback bind when no
-`DashboardAuthProvider` is registered. The bundled basic-auth plugin skips
+Cause: Hermes refuses a non-loopback bind when no `DashboardAuthProvider` is
+registered (measured at v0.22.5; the release notes through v0.23.2 record no
+change to it). The bundled basic-auth plugin skips
 registration when the password is empty. Compose interpolation
 `${HERMES_DASHBOARD_PASSWORD:-}` (empty default) did that after a pull that
 added the Hermes keys: `.env` never gained them, so `prod-stack up` without
@@ -3226,6 +3263,18 @@ Fix: compose interpolation defaults now match `.env.sample`
 ```sh
 bazelisk run //scripts:prod-stack -- up
 ```
+
+The other door is the one v0.23.0 added: the Webapp (`webapp.enabled`), which
+serves the Desktop workspace from the gateway on its own listener and is not
+behind this triple. It ships off and nothing in this stack sets it, so an
+open one is an operator edit rather than a default, and the audit refuses it:
+
+```sh
+bazelisk run //scripts:hermes-doctor -- --check webapp-door
+```
+
+It reads the seed and the volume copy of `hermes/config.yaml`, plus the
+container's own environment, and never prints a value.
 
 Sign-in is `HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` from `.env`
 (default `admin` / `change-me-hermes` until bootstrap rotates the

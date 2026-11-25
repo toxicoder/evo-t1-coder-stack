@@ -129,8 +129,11 @@ The rest of the suite the same boot seeds is `templates/common/*.AGENT.md` (seve
 definitions: the fleet's six plus the advisor's `documenter`) and
 `templates/common/*.PERSONA.toml` (three overlays) into `~/.grok/agents/` and
 `~/.grok/personas/`, and `templates/common/*.SKILL.md` into `~/.coder/skills/` with a `cp`
-twin in `~/.agents/skills/`. Change the seed in this repo and re-materialize it, never the
-copy that lives in a workspace.
+twin in `~/.agents/skills/`. Twenty skill seeds ship that way: nineteen through the four
+`stack-*.sh.tftpl` bodies and `grok-build-delegation.SKILL.md` through the `config_seed`
+manifest, each written by exactly one of them and each absent-only -- the per-body list sits
+under **Template payloads and their twins**. Change the seed in this repo and re-materialize
+it, never the copy that lives in a workspace.
 
 Which lane each role rides is rendered from the `grok_subagents_lane`, `grok_explore_lane`,
 `grok_plan_lane` and `grok_review_lane` template variables, and the checkpoints a fleet run
@@ -344,16 +347,31 @@ empty query is not proof that nothing depends on a file) see
     of the startup argument's byte budget)
   - `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`,
     `vscode-terminal-tmux.sh`
-  - `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`, `ez-skillify.SKILL.md`,
-    `ez-create-skill.SKILL.md`
-  - `stack-skills.sh.tftpl` (the `coder_script "stack_skills"` body that seeds that trio)
-  - `ez-bazel-first.SKILL.md` with its `ez-bazel-first.owned_files_check.py` and
-    `ez-bazel-first.glob_budget.py` helpers
-  - `ez-strong-types.SKILL.md` with its `ez-strong-types.type_baseline.py` helper
-  - `ez-trunk-based-repo.SKILL.md`
-  - `ez-micro-plan.SKILL.md` with its `ez-micro-plan.plan_check.py` helper
-  - `stack-repo-skills.sh.tftpl` (the `coder_script "stack_repo_skills"` body that seeds those four,
-    each helper into a `scripts/` subdir of the same skill directory)
+  - The twenty skill seeds are the `templates/common/*.SKILL.md` files, each written by one
+    body into `$HOME/.coder/skills/<name>/SKILL.md` with a `cp` twin in
+    `$HOME/.agents/skills/`, absent-only:
+
+    - `stack-skills.sh.tftpl` (the `coder_script "stack_skills"` body) -- the single-agent
+      procedures over the operator's own session and notes data: `ez-learn.SKILL.md`,
+      `ez-skillify.SKILL.md`, `ez-create-skill.SKILL.md`, `reflect-and-evolve.SKILL.md`,
+      `reflect-and-evolve-repo.SKILL.md`
+    - `stack-repo-skills.sh.tftpl` (the `coder_script "stack_repo_skills"` body) -- the
+      repository-conversion procedures, each helper into a `scripts/` subdir of the same
+      skill directory: `ez-bazel-first.SKILL.md` with its
+      `ez-bazel-first.owned_files_check.py` and `ez-bazel-first.glob_budget.py` helpers,
+      `ez-strong-types.SKILL.md` with its `ez-strong-types.type_baseline.py` helper,
+      `ez-trunk-based-repo.SKILL.md`, `ez-micro-plan.SKILL.md` with its
+      `ez-micro-plan.plan_check.py` helper, and `trunk-refactor.SKILL.md`
+    - `stack-fleet.sh.tftpl`, the body that also seeds the six role definitions and the
+      three persona overlays -- the fan-out checkpoints: `feature-implementation.SKILL.md`,
+      `skeptical-review.SKILL.md`, `security-audit.SKILL.md`, `bug-hunt.SKILL.md`
+    - `stack-advisors.sh.tftpl`, the body that also seeds the `documenter` role -- the
+      advisor runbooks: `documenter.SKILL.md`, `performance-optimizer.SKILL.md`,
+      `debugger.SKILL.md`, `migrator.SKILL.md`, and `ez-code-index.SKILL.md` with its
+      `ez-code-index.code_index.py` helper
+    - not a body: `grok-build-delegation.SKILL.md`, which the `config_seed` manifest in
+      `scripts/lib/config_seed.sh` writes into both skill homes beside the other config
+      seeds
   - `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`
   - `infisical-secrets.sh.tftpl` (the `coder_script "infisical_secrets"` body that fetches the
     workspace's credentials at boot)
@@ -519,6 +537,8 @@ Non-negotiables, in this repo and in any repo this agent converts:
 - Never force-push, never rewrite a shared branch, never delete a remote branch without
   confirmation, and record each proposed deletion's tip SHA.
 - Converting a repo to this model is `/trunk-refactor`
-  (`skills/trunk-refactor/SKILL.md`); the prose version is
+  (`templates/common/trunk-refactor.SKILL.md`, seeded by
+  `coder_script "stack_repo_skills"` and reachable here through the
+  `.grok/skills/trunk-refactor/SKILL.md` symlink); the prose version is
   `docs/workflows/trunk-feature-flags-refactor.md`, and `docs/branching.md` stays the rule of
   record.

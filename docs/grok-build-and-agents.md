@@ -206,14 +206,16 @@ Where each claim below comes from:
 
 - the tmux ones were read off the shipped tmux 3.4 on this box (what an attach
   writes to the client, and what `list-keys` still holds once the payload is sourced)
-- the setting names, values and defaults were read out of the shipped code-server
-  4.145.0's own config registry (VS Code base 1.145.0)
+- the setting names, values and defaults were read out of code-server 4.145.0's
+  own config registry (VS Code base 1.145.0). Both twins pin 4.145.2 now and that
+  registry has not been re-read against it, so every default named below is a
+  4.145.0 reading
 - the two Clipboard-API observations -- that a client selection fires
   `navigator.clipboard.writeText`, and that `document.execCommand('copy')` is the
   fallback that still lands on an insecure origin -- come from the earlier
-  headless-Chromium pass over that build with the rendered `settings.json` twin and
-  the tmux payload loaded, when `mouse` was still on and the copy out was a
-  Shift+drag
+  headless-Chromium pass over that same 4.145.0 build with the rendered
+  `settings.json` twin and the tmux payload loaded, when `mouse` was still on and
+  the copy out was a Shift+drag; neither has been repeated on 4.145.2
 
 That path is the client's own selection, which is what a plain drag drives now; the
 plain drag is due the same pass before it is restated as measured under `mouse off`.
@@ -230,9 +232,10 @@ plain drag is due the same pass before it is restated as measured under `mouse o
   `terminal.integrated.rightClickBehavior: "copyPaste"` - copy while there is a
   selection, paste when there is none - and pins
   `terminal.integrated.middleClickBehavior: "paste"`, because the config registry in
-  the shipped 4.145.0 gives that setting the default `"default"`, which pastes only
-  on the Linux build. tmux has no middle-click paste of its own to answer first:
-  `MouseDown2Pane` is unbound in the root table.
+  code-server 4.145.0 gives that setting the default `"default"`, which pastes only
+  on the Linux build - a reading off that build, not re-checked against the
+  4.145.2 the twins pin now. tmux has no middle-click paste of its own to answer
+  first: `MouseDown2Pane` is unbound in the root table.
 - **tmux keeps no buffer, so there is nothing to paste out of one.** `Prefix-[`
   still enters vi copy-mode and it is a viewer: the cursor keys, `PPage`/`NPage`,
   `Ctrl-u`/`Ctrl-d` and `k`/`j` walk history, `q` leaves, and `Escape` clears a
@@ -259,10 +262,12 @@ plain drag is due the same pass before it is restated as measured under `mouse o
   - A drag while `Prefix m` has the pointer on selects nothing, since the copy bindings
     stay unbound either way.
 - **An app inside the pane drives the machine clipboard over OSC 52; the browser
-  build drops it.** `set -g set-clipboard on` with `set -g allow-passthrough on`
-  stay in the seed for that one route: vim's `+` register, and anything else that
-  emits the escape, reach the machine clipboard the way a native terminal hands them
-  to it.
+  build drops it.** `set -g set-clipboard on` stays in the seed for that one route
+  alone: vim's `+` register, and anything else that emits the escape, reach the
+  machine clipboard the way a native terminal hands them to it. Passthrough is no
+  part of that route - measured on the shipped tmux 3.4 with a read-only client
+  attached, the escape arrives with `allow-passthrough off` and arrives nowhere with
+  `set-clipboard off`.
   - Over ssh from Ghostty, kitty, WezTerm or iTerm2 that copy lands.
   - code-server's browser build drops the escape before any clipboard call: a
     hand-written `printf '\033]52;c;<base64>\a'` was just as silent with
@@ -270,11 +275,22 @@ plain drag is due the same pass before it is restated as measured under `mouse o
     tmux.
   - Upstream
     [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
-    open with two unmerged fixes, and the shipped 4.145.0 registers no OSC 52 setting
-    at all, so there is nothing here to turn on.
+    open with two unmerged fixes, and code-server 4.145.0 registers no OSC 52
+    setting at all -- read off that build, not re-read on the 4.145.2 the twins
+    pin now -- so there is nothing here to turn on.
   - Nothing on the tmux side can spoil that clipboard either: tmux has no copy left to
     send, so an accidental selection in the pane cannot overwrite what the client just
     put there.
+- **`allow-passthrough` is off, and `Prefix p` switches it for one window.** What
+  that option governs is the DCS-wrapped kind: a pane app's own sequences in tmux's
+  `ESC Ptmux;` form, which the server copies to every attached client when it is on,
+  the ones that stopped draining included. That is the class that reaches the screen
+  as garbage over a TUI, so the seed ships it off and the clipboard needs none of it.
+  - Press `Prefix p` in the window that genuinely wants to pass a DCS through, and
+    that window alone takes them.
+  - Proof: `tmux show-options -gw allow-passthrough` reads `allow-passthrough off`,
+    and `tests/bats/tmux-fidelity.bats` boots a scratch server on the seed and reads
+    that value and the `Prefix p` binding back.
 - **Into the pane: `Ctrl+Shift+V` or right-click, on a secure context.** Both
   arrive bracketed (`ESC[200~ ... ESC[201~`) in a bash terminal and in a tmux
   pane alike, and a three-line paste arrives whole without a warning dialog.
@@ -334,9 +350,12 @@ item in the **Findings** list carries its own fix, and `--json` prints the same
 report for a script. What the report should read here:
 
 - **tmux options.** `templates/common/tmux.conf` seeds the four options Doctor's
-  own fixes write, `set -g set-clipboard on`, `set -g allow-passthrough on`,
+  own fixes write, `set -g set-clipboard on`, `set -g allow-passthrough off`,
   `set -g extended-keys on` and the `*:RGB` `terminal-features` entry, plus the
   `xterm*:extkeys` entry Doctor leaves to the operator.
+  - Of those four, `set-clipboard` alone carries the OSC 52 copy; `allow-passthrough`
+    ships off and `Prefix p` flips it for one window, because what it governs is the
+    DCS-wrapped kind, not the clipboard (see **`allow-passthrough` is off** above).
   - Those last two decide what survives the multiplexer: tmux rewrites 24-bit color down
     to the palette an attached client advertises, which is what makes a theme look
     washed out in the browser, and extkeys is what makes Shift+Enter and Ctrl+. arrive
@@ -470,16 +489,55 @@ report for a script. What the report should read here:
 
 ### The repository-conversion commands
 
-- **The stack ships its own three repository-conversion commands as `/ez-bazel-first`,
-  `/ez-strong-types` and `/ez-trunk-based-repo`**, and these stand in for nothing upstream:
-  they convert whatever repository the workspace happens to hold, which is why they carry no
-  path that only exists in this stack.
+- **The stack ships its own four repository-conversion commands as `/ez-bazel-first`,
+  `/ez-strong-types`, `/ez-trunk-based-repo` and `/trunk-refactor`**, and these stand in for
+  nothing upstream: they convert whatever repository the workspace happens to hold, which is
+  why they carry no path and no gate command that exists in only one repository - each one
+  discovers the target repo's own gate and quotes what it found.
 
   They are seeded the same way, by
   `coder_script.stack_repo_skills`, from `templates/common/ez-bazel-first.SKILL.md`,
-  `ez-strong-types.SKILL.md` and `ez-trunk-based-repo.SKILL.md`, plus the three python
+  `ez-strong-types.SKILL.md`, `ez-trunk-based-repo.SKILL.md` and
+  `templates/common/trunk-refactor.SKILL.md`, plus the three python
   helpers they shell out to. Same absent-only contract, same marker-based takeover rule,
   same `[skills] disabled` escape hatch.
+
+#### The four seed tiers
+
+One row per tier, the destination it writes, and the body that writes it. The boot
+implements these four by destination directory, and nothing crosses over:
+
+| Tier | Destination | Written by |
+| ---- | ----------- | ---------- |
+| A - global rulebook, roles, hooks | `~/.grok/AGENTS.md`, `~/.grok/agents/`, `~/.grok/personas/`, `~/.grok/hooks/` | `agents-seed.sh.tftpl`, `stack-fleet.sh.tftpl`, `stack-advisors.sh.tftpl`, `stack-hooks.sh.tftpl` |
+| B - global skill pair | `~/.coder/skills/<x>/SKILL.md` plus the `cp` twin in `~/.agents/skills/<x>/` | `stack-skills.sh.tftpl`, `stack-repo-skills.sh.tftpl`, `trunk-refactor-seed.sh.tftpl` |
+| C - per clone | `<clone>/.grok/skills/<x>/SKILL.md` for a folder under `/home/coder/workspace/`, absent-only and link-guarded | `stack-repo-skills.sh.tftpl`, which gates each member of the tier on its own predicate |
+| D - per owner | `~/.grok/notes`, `~/.grok/memory`, `~/.grok/sessions`, on the per-owner volumes | the volumes themselves, not a boot body |
+
+- Tier C is the tier that keeps one repository's own commands out of every other
+  workspace's session, and it now carries two artifacts. `/ez-bazel-first` is seeded
+  into every Bazel repository (the `MODULE.bazel` / `WORKSPACE` predicate) because that
+  command converts whatever repository it sits in. `/stack-repo-commands` is seeded
+  only into a clone that tracks the `.evo-t1-stack-repo` sentinel at its root, from
+  `templates/common/stack-repo-commands.SKILL.md`. That sentinel is tracked by the
+  stack repository and by no other, so it must never be copied into another repo: its
+  presence is what tells the boot the clone *is* the stack.
+
+- Which commands moved, and which stayed. `bazelisk run //:fix` (this clone's formatter
+  target), `bazelisk run //scripts:bazel-map -- tests-for` (this clone's Bazel graph
+  reader) and `.githooks/pre-commit` (a hook only this repo installs) are true only
+  inside a checkout of this repository, so they are Tier C: `~/.grok/AGENTS.md` no
+  longer names them and points at `<clone>/.grok/skills/stack-repo-commands/SKILL.md`
+  instead. The operator CLIs - `//scripts:dev-stack`, `//scripts:update-configs`,
+  `//scripts:refresh-configs`, `//scripts:bootstrap`, `//scripts:github-auth`,
+  `//scripts:search-check`, `//scripts:mcp-check` - live in that same checkout, but an
+  agent in any workspace has to be able to ask for them, so they stay in the Tier-A
+  rulebook, which now carries one sentence saying to run them from the stack
+  repository's own checkout or a host shell. Stripping them would be a regression.
+
+- Tier C is not home-relative, so it is not a reseed target: `config_seed.sh` lists
+  destinations it re-roots at `$HOME`, which is why both of its members are absent from
+  that manifest, the way `/ez-bazel-first` already is.
 
 ### The dispatch plan command
 
@@ -1297,7 +1355,7 @@ procedure an agent follows by hand: **Map** puts two read-only explorers on `age
 aliases in `litellm/config.yaml`, so `grok inspect` is the check after an alias edit - a name
 the catalog no longer carries fails the run rather than degrading it.
 
-Two more sit beside it in the same directory, invocable by name under the same rule that every
+Three more sit beside it in the same directory, invocable by name under the same rule that every
 id in them is a local alias:
 
 - `implement-reviewed` (`{ goal, question, verify }`) is `fleet-verify` with the repair round
@@ -1310,6 +1368,64 @@ id in them is a local alias:
   hypotheses (one bisecting when a known-good ref is given), one writer on `agent-swarm` lands
   the fix with the test that is red before the change and green after, and a skeptic on
   `agent-review` re-runs both runs.
+- `open-bugs` (`{ issue, label, labelInProgress, limit, openPr, scratchDir }`) is the queue
+  shape: **Discover** reads the open `bug`-labelled issues off the tracker with gh on
+  `agent-explore` (an empty queue is a reported outcome, not a failure), **Triage** puts one
+  read-only explorer per candidate on that lane to reproduce the report or say what it saw
+  instead, **Fix** puts one writer per reproducible issue on `agent-swarm` with the test red
+  before the change and green after, and **Review** puts a skeptic per fix on `agent-review`
+  that re-runs the producer's own command. The issues go out as one wave and each runs its
+  phases in order. **Write back** posts every outcome through one seam that keeps both tracker
+  rules - `gh issue comment <n> --body-file`, the body never in argv, and the in-progress label
+  only after `gh label list` proves the repository already declares it - and it never closes,
+  reopens, reassigns, labels beyond that one label, or milestones an issue. **Associate** is
+  what keeps a bug tied to its fix: the run writes the pull-request body to
+  `/tmp/open-bugs/pr-body-issue-<n>.md` (`scratchDir` moves it), prints that path in its report,
+  and posts the issue comment that names the branch, the tip sha `git rev-parse` reports, and
+  that path. The keyword is decided, not typed: `Closes #<n>` only when the fixer reported
+  PR-ready and the skeptic kept every claim it tested, `Refs #<n>` for everything else, and it
+  lives in that body file alone - never in a commit subject, never in an issue comment, never on
+  a number this run did not work. If a pull request already exists for the branch, the comment
+  names its number and url, which is the link back onto the issue.
+- **The push and the pull request are the operator's.** `openPr` is off, so a run reports
+  `push and pull request: NOT run - the operator's action` rather than going quiet, and the
+  hand-off agent is told not to push and to print the two commands instead. The checklist for
+  that step, per issue row in the report: read `pr-body:` and open that file, fill the two
+  lines it asks for, then run the printed `git push -u origin fix/<n>-<slug>` and
+  `gh pr create --head fix/<n>-<slug> --body-file <that path>`, both through
+  `env -u GH_TOKEN -u GITHUB_TOKEN`. Passing `openPr: true` hands those two commands to the
+  run's own hand-off agent, and each row then reports what it really did under `pushed:`.
+  Pick by what you have in front of you - `open-bugs` is the discovery half,
+  `debug-fix` is the single-symptom half, and `bug-hunt` is the skill an agent follows by hand.
+
+### The seeded workflow tier
+
+A workflow has two homes and Grok reads both. A *project* workflow is
+`.grok/workflows/<name>.js` at the root of the trusted clone, and a *user* workflow is
+`~/.grok/workflows/<name>.js` (`$GROK_HOME/workflows`); only `.js` files run, a built-in
+keeps its name over both, and a project name keeps its name over a user one. That second
+tier is the one that travels, so it is the one this stack seeds.
+
+The reason is the first tier's load rule: project workflows come from the clone in front of
+the session, so the workflows this repo carries are visible in this repo and nowhere else -
+a workspace that cloned some other repository never sees them. `coder_script
+"stack_workflows"` therefore writes all four general-purpose ones into the user home on
+every start, from `templates/common/stack-workflows.sh.tftpl`, the route the agent
+definitions and the personas already take. Where each piece lives:
+
+- the canonical body: `templates/common/<name>.workflow.js`, one per workflow;
+- the repo-tier entry: `.grok/workflows/<name>.js`, a symlink to `../../templates/common/`
+  like `.grok/agents/architect.md` is, so there is one copy of each to edit;
+- the seed: `templates/common/stack-workflows.sh.tftpl`, declared in both template twins.
+
+The seed is marker-aware, the hooks contract rather than the absent-only one the skills
+keep: a written file carries `// managed-by: evo-t1-coder-stack`, a copy still carrying it
+gets the current bytes on every boot, a copy whose marker you deleted is yours and the boot
+leaves it alone with a `note:`. Nothing is ever deleted. A workflow you write yourself under
+`~/.grok/workflows/` under a name the stack does not use is untouched, and a project
+workflow of the same name still overrides the user copy - which is why the four names here
+are reserved and yours should differ. `//tests:bats_stack_workflows_test` pins the links,
+the marker pair, and both twins.
 
 ### Hooks
 
@@ -2202,22 +2318,22 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
 8. `~/.agents/skills/ez-skillify/SKILL.md`
 9. `~/.coder/skills/ez-create-skill/SKILL.md`
 10. `~/.agents/skills/ez-create-skill/SKILL.md`
-11. `~/.coder/skills/ez-bazel-first/SKILL.md`
-12. `~/.agents/skills/ez-bazel-first/SKILL.md`
-13. `~/.coder/skills/ez-bazel-first/scripts/owned_files_check.py`
-14. `~/.agents/skills/ez-bazel-first/scripts/owned_files_check.py`
-15. `~/.coder/skills/ez-bazel-first/scripts/glob_budget.py`
-16. `~/.agents/skills/ez-bazel-first/scripts/glob_budget.py`
-17. `~/.coder/skills/ez-strong-types/SKILL.md`
-18. `~/.agents/skills/ez-strong-types/SKILL.md`
-19. `~/.coder/skills/ez-strong-types/scripts/type_baseline.py`
-20. `~/.agents/skills/ez-strong-types/scripts/type_baseline.py`
-21. `~/.coder/skills/ez-trunk-based-repo/SKILL.md`
-22. `~/.agents/skills/ez-trunk-based-repo/SKILL.md`
-23. `~/.coder/skills/ez-micro-plan/SKILL.md`
-24. `~/.agents/skills/ez-micro-plan/SKILL.md`
-25. `~/.coder/skills/ez-micro-plan/scripts/plan_check.py`
-26. `~/.agents/skills/ez-micro-plan/scripts/plan_check.py`
+11. `~/.coder/skills/reflect-and-evolve/SKILL.md`
+12. `~/.agents/skills/reflect-and-evolve/SKILL.md`
+13. `~/.coder/skills/reflect-and-evolve-repo/SKILL.md`
+14. `~/.agents/skills/reflect-and-evolve-repo/SKILL.md`
+15. `~/.coder/skills/ez-strong-types/SKILL.md`
+16. `~/.agents/skills/ez-strong-types/SKILL.md`
+17. `~/.coder/skills/ez-strong-types/scripts/type_baseline.py`
+18. `~/.agents/skills/ez-strong-types/scripts/type_baseline.py`
+19. `~/.coder/skills/ez-trunk-based-repo/SKILL.md`
+20. `~/.agents/skills/ez-trunk-based-repo/SKILL.md`
+21. `~/.coder/skills/ez-micro-plan/SKILL.md`
+22. `~/.agents/skills/ez-micro-plan/SKILL.md`
+23. `~/.coder/skills/ez-micro-plan/scripts/plan_check.py`
+24. `~/.agents/skills/ez-micro-plan/scripts/plan_check.py`
+25. `~/.coder/skills/trunk-refactor/SKILL.md`
+26. `~/.agents/skills/trunk-refactor/SKILL.md`
 
 #### What each numbered path is for
 
@@ -2229,20 +2345,23 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
 
 #### Which body writes each family
 
-- 1-4 are written by `startup.sh.tftpl`. 5-10 are the stack's three skill commands and are
-  written by `coder_script.stack_skills`, whose own `execve` carries the three payloads;
+- 1-4 are written by `startup.sh.tftpl`. 5-14 are the stack's five single-agent skill
+  commands and are written by `coder_script.stack_skills`, whose own `execve` carries the
+  five payloads;
   they ride their own script body rather than the startup argument because that argument
   has a single-argument ceiling of its own
   ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Each `.agents`
   copy is a `cp` of the managed `.coder` copy, never a second inline body, so the pair
   cannot drift.
-- 11-26 are the four commands of that second family - the three repository conversions
+- 15-26 are the five commands of that second family - the four repository conversions
   plus the `/ez-micro-plan` dispatcher - and are written by
   `coder_script.stack_repo_skills`, a second body with its own ceiling, for the same
-  reason and because this family also ships the python helpers 13-14, 16, 19-20 and 25-26
-  that three of its four bodies invoke by `~/.agents` path. Same absent-only contract and
+  reason and because this family also ships the python helpers 17-18 and 23-24
+  that two of its five commands invoke by `~/.agents` path. Same absent-only contract and
   the same `cp` twin rule; the helper directories are made by the body, so a workspace that
-  already has the `SKILL.md` but lost a helper still gets the helper back.
+  already has the `SKILL.md` but lost a helper still gets the helper back. The sixth
+  command of that body, `/ez-bazel-first`, is absent from this list on purpose: it is
+  seeded into each Bazel repository's own checkout rather than into the two skill homes.
 
 #### The memory and skill trio
 
@@ -2353,7 +2472,9 @@ One line each: `/ez-bazel-first` puts every tracked file behind a build target, 
 checker profile per language and turns the broad-type census into a ratchet that fails on
 any widening; `/ez-trunk-based-repo` retires environment branches, lands unfinished work
 behind a flag that defaults off, and presents the leftover branches for deletion with their
-tip SHAs. All three take a repository path and work on that checkout, so they are useful in
+tip SHAs; `/trunk-refactor` is the deep version of that same model - six phases, twelve
+criteria, and a report that carries every branch it proposes for deletion with its tip SHA.
+All four take a repository path and work on that checkout, so they are useful in
 a workspace cloned against any of the fleet's repositories.
 
 They differ from the authoring trio in one structural way: two of them shell out to a
@@ -2363,29 +2484,34 @@ everything else here, which means the copy in a workspace is stack-owned while i
 marker, and the way to fix a helper is to fix the seed under `templates/common/` and
 re-materialize, never to patch the copy that is running.
 
-This repo keeps its own project-scoped `/trunk-refactor` under
-`skills/trunk-refactor/SKILL.md`, which is the rule of record for *this* repository and
-cites its gates by label. `/ez-trunk-based-repo` is the portable version of the same model:
-it discovers a target repo's own gates at inventory time rather than assuming Bazel, so it
-works in a Compose, K3s, Ansible or Terraform repository too.
+`/trunk-refactor` and `/ez-trunk-based-repo` cover one model at two depths, and both
+discover a target repo's own gates at inventory time rather than assuming Bazel, so each
+works in a Compose, K3s, Ansible or Terraform repository too. The canonical body is
+`templates/common/trunk-refactor.SKILL.md`; the repository that ships it keeps a tracked
+symlink at `.grok/skills/trunk-refactor/SKILL.md`, which is what makes it a slash command
+there, and its prose twin is `docs/workflows/trunk-feature-flags-refactor.md`.
 
-The fourth payload `coder_script.stack_repo_skills` seeds is not a converter.
+The fifth payload `coder_script.stack_repo_skills` seeds is not a converter.
 `/ez-micro-plan` is the parent's protocol for splitting one change across a fleet of
 subagents and proving the split dispatches; how its slots, lane and check fit together is
 [The fan-out seam](#the-fan-out-seam).
 
-### The repo-scoped runbook
+### The reflection runbooks
 
 #### The session reviewer
 
 `/reflect-and-evolve` reviews past Grok Build sessions and turns what it finds into planned changes.
 It reads the per-session `signals.json` under `~/.grok/sessions/<escaped-cwd>/`, ranked by the bundled
-`skills/reflect-and-evolve/scripts/session_signals.py`, plus the `/ez-learn` session logs and the notes file.
-It changes the seeds in this repo, never the copies a workspace booted with. Repo-scoped like `/trunk-refactor`
-and not seeded into a workspace home: canonical at `skills/reflect-and-evolve/SKILL.md`, discovered through
-the `.grok/skills/reflect-and-evolve/SKILL.md` symlink, pinned by `tests/bats/reflect-and-evolve-skill.bats`.
+sweeper `~/.agents/skills/reflect-and-evolve/scripts/session_signals.py` - in the repository
+that ships it, `templates/common/reflect-and-evolve.session_signals.py`, which is still the only
+sanctioned way into `~/.grok/sessions/` - plus the `/ez-learn` session logs and the notes file.
+It changes the seeds in the shipping repository, never the copies a workspace booted with.
+Seeded like the rest of the suite by `coder_script.stack_skills`: canonical at
+`templates/common/reflect-and-evolve.SKILL.md`, and discovered in the shipping repository
+through the `.grok/skills/reflect-and-evolve/SKILL.md` symlink, pinned by
+`tests/bats/reflect-and-evolve-skill.bats`.
 
-#### The repository reviewer
+### The repo-scoped runbook
 
 `/reflect-and-evolve-repo` is its sibling against a different subject: where
 `/reflect-and-evolve` improves the agent setup, this one reviews past work in *this
@@ -2393,13 +2519,15 @@ repository* and turns what it finds into planned improvements to code, project
 conventions, scripts, docs and configs.
 
 It reads the same ranked `signals.json` table through the same bundled
-`skills/reflect-and-evolve/scripts/session_signals.py`, which stays the only sanctioned
-way into `~/.grok/sessions/`, and it adds what a repo run has and a session run does
+`~/.agents/skills/reflect-and-evolve/scripts/session_signals.py` (in the shipping
+repository, `templates/common/reflect-and-evolve.session_signals.py`, which is the
+canonical source the seed reads), which stays the only
+sanctioned way into `~/.grok/sessions/`, and it adds what a repo run has and a session run does
 not: git history, and the repo's own tooling and gate.
 
-Repo-scoped like `/trunk-refactor` and not seeded into a workspace home: canonical at
-`skills/reflect-and-evolve-repo/SKILL.md`, discovered through the
-`.grok/skills/reflect-and-evolve-repo/SKILL.md` symlink, pinned by
+Seeded like the rest of the suite by `coder_script.stack_skills`: canonical at
+`templates/common/reflect-and-evolve-repo.SKILL.md`, and discovered in the shipping
+repository through the `.grok/skills/reflect-and-evolve-repo/SKILL.md` symlink, pinned by
 `tests/bats/reflect-and-evolve-repo-skill.bats`.
 
 ### What this is not

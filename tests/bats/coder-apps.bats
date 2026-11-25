@@ -66,8 +66,9 @@ hcl_code_server_script() {
     "$1"
 }
 
-# Print the code_server_version local of one main.tf twin, bare (4.145.0), or
-# nothing when the twin stopped pinning the editor.
+# Print the code_server_version local of one main.tf twin, bare (the release
+# string the twin pins), or nothing when the twin stopped pinning the editor.
+# The version itself belongs to the one literal the pin test below names.
 code_server_pin() {
   grep -oE 'code_server_version[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' "$1" |
     head -n 1 | sed -E 's/.*"([0-9.]+)".*/\1/'
@@ -332,6 +333,26 @@ code_server_pin() {
     }
     grep -Fq -- '--version="$${CS_VERSION}"' "${cs}" || {
       echo "${cs}: the installer runs without --version, so the pin is decorative" >&2
+      return 1
+    }
+  done
+}
+
+@test "editor: both twins carry the release this suite names, not just each other" {
+  # Parity is not a pin. Revert both twins to an older release in one commit and
+  # every comparison above still passes, because each one reads the version back
+  # out of the file it is checking. The literal below is the only place this suite
+  # states what the editor ships, so a bump has to move the twins and this line
+  # together, and a downgrade or a silent float back to latest fails here by name.
+  local tf pin want="4.145.2"
+  for tf in "${TEMPLATE_TWINS[@]}"; do
+    pin="$(code_server_pin "${tf}")"
+    [ "${pin}" = "${want}" ] || {
+      echo "${tf}: code_server_version is '${pin:-none}', this stack ships ${want}" >&2
+      return 1
+    }
+    grep -Fq "code_server_version = \"${want}\"" "${tf}" || {
+      echo "${tf}: no literal code_server_version = \"${want}\" local" >&2
       return 1
     }
   done

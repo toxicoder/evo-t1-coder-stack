@@ -115,11 +115,18 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-# The repo-tier skill bodies, shipped with the repo so a session reads them from the
-# checkout instead of a home copy that another workspace may rewrite.
+# The token-coverage anchor for the `skills/...` strings four CLIs carry in their
+# retirement lists. The repo-tier skill bodies moved to `.grok/skills/` and the seeded
+# trio moved to `templates/common/`, so this glob matches nothing on purpose: a later
+# `chore:` deletes this group and the six `"//:skill_sources"` rows that name it.
 filegroup(
     name = "skill_sources",
-    # glob-policy: a skill body is a prose tree read from the checkout, and a skill grows by adding pages under references/ and a bundled helper under scripts/. The .py rides the same group as its own prose because the pair is one skill and no other group carries a file under skills/; the gate that pins the content is the skill's own //tests:bats_*_skill_test suite, which names the group, not the files.
+    # Kept as the group that answers "who reads a skills/ path" for scripts/BUILD.bazel,
+    # whose comment names the six destination strings this glob is the only thing able to
+    # cover. The repo-tier bodies it used to carry live under .grok/skills/ and belong to
+    # the group below; the seeded bodies live under templates/common/ and belong to the
+    # template payload groups.
+    # glob-policy: token-coverage anchor for the skills/ paths four CLIs retire.
     srcs = glob(
         [
             "skills/**/*.md",

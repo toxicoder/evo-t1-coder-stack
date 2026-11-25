@@ -58,7 +58,8 @@ Measure the program as it stands, on the input it actually sees, and name the in
     time <the command>
     hyperfine --warmup 3 --runs 7 '<the command>'   # only if installed; never install it
     rg --stats '<pattern>' .                        # search work: files, matches, elapsed
-    bazelisk test //:test-fast --profile=/tmp/perf-profile.gz --explain=/tmp/perf-explain.txt
+    bazelisk build //... --profile=/tmp/perf-profile.gz --explain=/tmp/perf-explain.txt  # Bazel repos
+    <the build or test step the repo's own CI runs, with its profiler flags>              # elsewhere
     cat /proc/loadavg /proc/meminfo /proc/self/io   # Linux: is it even the CPU
 
 A single run under a second is noise: quote the median of at least seven with its spread.
@@ -131,11 +132,14 @@ Re-run the baseline command on the changed tree -- same input, same box, same re
 set the two numbers side by side.
 
 Then hand the change to an independent skeptic on `agent-review`, never the writer and never you,
-with both commands and the base ref, and require it to run both:
+with both commands, the repo's own gate command, and the base ref, and require it to run all three.
+Discover that gate once before you hand anything over -- the test steps in the nearest `BUILD.bazel`
+(`bazelisk query 'kind(test, //...:all)'`), the `scripts` map in `package.json`, the `Makefile`'s
+target list, or the job steps in `.github/workflows` -- and never copy one from another repo:
 
     git worktree add --detach /tmp/perf-base <base-ref> && (cd /tmp/perf-base && <the command>)
     <the exact same command>           # then git worktree remove /tmp/perf-base
-    bazelisk test //:test-fast
+    <the repo's own gate command>      # discovered just above
 
 ### Let the skeptic's own runs decide
 
@@ -152,7 +156,7 @@ Each line is a command someone ran and quoted, not an adjective you asserted:
     # before: instrument named, median of N runs with its spread, from Step 1
     # after: the same command, the same input, the same repeat count
     # skeptic on agent-review: re-ran both in its own shell; its own transcript is the proof
-    bazelisk test //:test-fast   # the gate, in your own shell
+    <the repo's own gate command, discovered in Step 5>   # the gate, in your own shell
 
 One change in the diff, one writer on it, the falsifying experiment confirmed or falsified, and
 every regression listed beside the headline win. No both-numbers, no optimisation.

@@ -32,7 +32,6 @@ if [ -n "$home_owner" ]; then
   mkdir -p "$HOME/.shared/vscode" "$HOME/.grok" 2>/dev/null || true
   $SUDO chown -R "$home_owner" "$HOME/.shared" "$HOME/.grok" 2>/dev/null || true
 fi
-
 # --- tmux -------------------------------------------------------------------
 boot_stage 1 "tmux and its config"
 if ! command -v tmux >/dev/null 2>&1; then

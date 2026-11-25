@@ -25,3 +25,4 @@ Makefile	shim that forwards to //:targets
 # Editor convenience. The tasks invoke `bazelisk` directly, so the file is a
 # launcher for a human and carries no build meaning a target would consume.
 .vscode/tasks.json	editor convenience, no build meaning
+.evo-t1-stack-repo	stack-repository sentinel: gates the per-clone stack-repo-commands tier that templates/common/stack-repo-skills.sh.tftpl seeds

@@ -63,6 +63,13 @@ COMMON_PAYLOADS=(
   ez-trunk-based-repo.SKILL.md
   ez-micro-plan.SKILL.md
   ez-micro-plan.plan_check.py
+  stack-repo-commands.SKILL.md
+  reflect-and-evolve.SKILL.md
+  reflect-and-evolve.session_signals.py
+  reflect-and-evolve.checklist.md
+  reflect-and-evolve-repo.SKILL.md
+  reflect-and-evolve-repo.checklist.md
+  trunk-refactor.SKILL.md
   explorer.AGENT.md
   architect.AGENT.md
   implementer.AGENT.md
@@ -96,10 +103,18 @@ COMMON_PAYLOADS=(
   agents-seed.sh.tftpl
   stack-skills.sh.tftpl
   boot-log.lib.sh
+  tz-setup.sh.tftpl
+  tz.sh
   terminal-launchers.sh.tftpl
   stack-repo-skills.sh.tftpl
+  trunk-refactor-seed.sh.tftpl
   stack-advisors.sh.tftpl
   stack-hooks.sh.tftpl
+  stack-workflows.sh.tftpl
+  debug-fix.workflow.js
+  fleet-verify.workflow.js
+  implement-reviewed.workflow.js
+  open-bugs.workflow.js
   stack-fleet.sh.tftpl
 )
 
@@ -126,6 +141,13 @@ write_common_payloads() {
   printf '%s\n' '# skill' >"${dest}/ez-trunk-based-repo.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/ez-micro-plan.SKILL.md"
   printf '%s\n' 'pass' >"${dest}/ez-micro-plan.plan_check.py"
+  printf '%s\n' 'recipes' >"${dest}/stack-repo-commands.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/reflect-and-evolve.SKILL.md"
+  printf '%s\n' 'pass' >"${dest}/reflect-and-evolve.session_signals.py"
+  printf '%s\n' '# checklist' >"${dest}/reflect-and-evolve.checklist.md"
+  printf '%s\n' '# skill' >"${dest}/reflect-and-evolve-repo.SKILL.md"
+  printf '%s\n' '# checklist' >"${dest}/reflect-and-evolve-repo.checklist.md"
+  printf '%s\n' '# skill' >"${dest}/trunk-refactor.SKILL.md"
   printf '%s\n' '# agent' >"${dest}/explorer.AGENT.md"
   printf '%s\n' '# agent' >"${dest}/architect.AGENT.md"
   printf '%s\n' '# agent' >"${dest}/implementer.AGENT.md"
@@ -159,10 +181,18 @@ write_common_payloads() {
   printf '%s\n' '#!/bin/bash' >"${dest}/agents-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
   printf '%s\n' '#!/bin/sh' >"${dest}/boot-log.lib.sh"
+  printf '%s\n' '#!/bin/bash' >"${dest}/tz-setup.sh.tftpl"
+  printf '%s\n' '#!/bin/sh' >"${dest}/tz.sh"
   printf '%s\n' '#!/bin/sh' >"${dest}/terminal-launchers.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/trunk-refactor-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-advisors.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-hooks.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/stack-workflows.sh.tftpl"
+  printf '%s\n' '// workflow' >"${dest}/debug-fix.workflow.js"
+  printf '%s\n' '// workflow' >"${dest}/fleet-verify.workflow.js"
+  printf '%s\n' '// workflow' >"${dest}/implement-reviewed.workflow.js"
+  printf '%s\n' '// workflow' >"${dest}/open-bugs.workflow.js"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-fleet.sh.tftpl"
 }
 

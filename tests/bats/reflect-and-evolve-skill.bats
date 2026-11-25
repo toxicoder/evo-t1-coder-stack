@@ -4,10 +4,13 @@
 # ## reflect-and-evolve-skill.bats - the reflection runbook stays whole, linked, and runnable.
 #
 # The repo ships one reusable procedure for turning past sessions into planned changes to the
-# agent system: skills/reflect-and-evolve/SKILL.md is the canonical body,
-# .grok/skills/reflect-and-evolve/SKILL.md is the symlink that makes it a repo-tier skill the
-# CLI discovers, references/checklist.md is the evidence-and-quality page the body hands the
-# reader, scripts/session_signals.py is the sweeper step 1 runs, and
+# agent system: templates/common/reflect-and-evolve.SKILL.md is the canonical body,
+# .grok/skills/reflect-and-evolve/SKILL.md is the tracked symlink that makes it a repo-tier
+# skill the CLI discovers, templates/common/reflect-and-evolve.checklist.md is the
+# evidence-and-quality page the body hands the reader (seeded at
+# ~/.coder/skills/reflect-and-evolve/references/checklist.md), and
+# templates/common/reflect-and-evolve.session_signals.py is the sweeper step 1 runs (seeded at
+# ~/.coder/skills/reflect-and-evolve/scripts/session_signals.py), and
 # docs/grok-build-and-agents.md is the roster entry that tells a person the command exists.
 #
 # Each of those fails in a way nothing else notices. A truncated paste loses a Core Workflow
@@ -32,8 +35,9 @@
 # something to commit into the repo.
 #
 # Usage: bazelisk test //tests:bats_reflect_and_evolve_skill_test   (from any cwd)
-# Safety: reads skills/reflect-and-evolve/SKILL.md, its references page and its sweeper, the
-#         .grok/ link, the fixture session tree under tests/bats/fixtures/, and the docs page;
+# Safety: reads templates/common/reflect-and-evolve.SKILL.md, its checklist page and its
+#         sweeper, the .grok/ link, the stack-skills seed that lays the two helpers down, the
+#         fixture session tree under tests/bats/fixtures/, and the docs page;
 #         writes only per-test scratch under BATS_TEST_TMPDIR. Never touches a real ~/.grok
 #         session store, and never runs the sweeper without --home pointing at one of these.
 
@@ -47,6 +51,7 @@ SKILL=""
 SKILL_LINK=""
 CHECKLIST=""
 SWEEPER=""
+SEED=""
 FIXTURE=""
 DOC_PAGE=""
 
@@ -88,10 +93,13 @@ WINDOW=3650
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root"
-  SKILL="${REPO_ROOT}/skills/reflect-and-evolve/SKILL.md"
+  SKILL="${REPO_ROOT}/templates/common/reflect-and-evolve.SKILL.md"
   SKILL_LINK="${REPO_ROOT}/.grok/skills/reflect-and-evolve/SKILL.md"
-  CHECKLIST="${REPO_ROOT}/skills/reflect-and-evolve/references/checklist.md"
-  SWEEPER="${REPO_ROOT}/skills/reflect-and-evolve/scripts/session_signals.py"
+  CHECKLIST="${REPO_ROOT}/templates/common/reflect-and-evolve.checklist.md"
+  SWEEPER="${REPO_ROOT}/templates/common/reflect-and-evolve.session_signals.py"
+  # The stack seed is what lays the two helpers down under the skill's own home, which is the
+  # path the body's References section sends a reader to.
+  SEED="${REPO_ROOT}/templates/common/stack-skills.sh.tftpl"
   # The fixture is this suite's own tree, so it is reached from the suite directory rather
   # than by re-spelling the suite path.
   FIXTURE="${BATS_TEST_DIRNAME}/fixtures/reflect-and-evolve-skill"
@@ -215,8 +223,23 @@ assert_ascii() {
     return 1
   }
   # readlink -f resolves both sides, so the claim is one source of truth rather than two
-  # copies that agree today.
-  [[ "$(readlink -f "${SKILL_LINK}")" == "$(readlink -f "${SKILL}")" ]]
+  # copies that agree today. Under a runfiles tree the chain walks out to the real checkout,
+  # so the aim is matched on its templates/common/ tail rather than on an absolute path, and
+  # cmp proves the bytes are the payload's. A link still aimed at the retired skills/ path
+  # resolves to nothing here, so it fails as a dangling link rather than as a wrong tail.
+  local target
+  target="$(readlink -f "${SKILL_LINK}")"
+  case "${target}" in
+    */templates/common/reflect-and-evolve.SKILL.md) ;;
+    *)
+      echo "${SKILL_LINK} resolves to ${target}, not to the templates/common/reflect-and-evolve.SKILL.md body" >&2
+      return 1
+      ;;
+  esac
+  cmp -s "${SKILL_LINK}" "${SKILL}" || {
+    echo "${SKILL_LINK} does not carry the bytes of ${SKILL}" >&2
+    return 1
+  }
 }
 
 @test "reflect_and_evolve_skill: frontmatter parses, names the skill, and sells it well enough to fire" {
@@ -325,9 +348,12 @@ RFE_FRONTMATTER_CHECK
     echo "no '## References' section in ${SKILL}" >&2
     return 1
   }
+  # The two helper pages, spelled the way the body spells them: under the skill's own home,
+  # which is where the seed lays them. The tracked sources they are rendered from sit under
+  # templates/common/, and the pair below proves the reader is sent somewhere that ships.
   for page in \
-    "skills/reflect-and-evolve/references/checklist.md" \
-    "skills/reflect-and-evolve/scripts/session_signals.py"; do
+    '~/.agents/skills/reflect-and-evolve/references/checklist.md' \
+    '~/.agents/skills/reflect-and-evolve/scripts/session_signals.py'; do
     grep -qF -- "${page}" <<<"${block}" || {
       echo "the References section never names ${page}" >&2
       return 1
@@ -976,36 +1002,50 @@ RFE_ZERO_CHECK
 
 @test "reflect_and_evolve_skill: every file the skill ships is pure ASCII with no carriage return" {
   local file checked=0
-  # Runfiles hand these over as symlinks into the source tree, so -type f alone matches
-  # nothing here; -type l plus the file test reads the bytes that actually ship.
-  while IFS= read -r file; do
+  # The shipped set is the three templates/common/ payloads the stack seed renders: the body,
+  # its checklist page, and its sweeper. Runfiles hand these over as symlinks into the source
+  # tree, so the file test reads the bytes that actually ship, and the count is checked or an
+  # empty set would satisfy the loop.
+  for file in "${SKILL}" "${CHECKLIST}" "${SWEEPER}"; do
     [[ -f "${file}" ]] || continue
     assert_ascii "${file}" || return 1
     ((checked += 1))
-  done < <(find "${REPO_ROOT}/skills/reflect-and-evolve" \( -type f -o -type l \) | sort)
-  [[ ${checked} -ge 3 ]] || {
-    echo "only ${checked} file(s) under skills/reflect-and-evolve/, expected the body, the checklist, and the sweeper" >&2
+  done
+  [[ ${checked} -eq 3 ]] || {
+    echo "only ${checked} of the 3 files the skill ships (body, checklist, sweeper) are present under templates/common/" >&2
     return 1
   }
+  # Each helper ships into the skill's own home, which is the path the body's References
+  # section sends a reader to: a payload that stopped being seeded leaves that path missing
+  # while the body still reads fine.
+  local home
+  for home in \
+    '.coder/skills/reflect-and-evolve/references/checklist.md' \
+    '.coder/skills/reflect-and-evolve/scripts/session_signals.py'; do
+    grep -qF -- "\$HOME/${home}" "${SEED}" || {
+      echo "stack-skills.sh.tftpl never lays down \$HOME/${home}" >&2
+      return 1
+    }
+  done
 }
 
-@test "reflect_and_evolve_skill: the docs page lists the skill in the repo-scoped runbook" {
+@test "reflect_and_evolve_skill: the docs page lists the skill under the reflection runbooks" {
   [[ -f "${DOC_PAGE}" ]] || {
     echo "missing ${DOC_PAGE}: the roster never tells a person the command exists" >&2
     return 1
   }
   local block
-  block="$(subsection "${DOC_PAGE}" "### The repo-scoped runbook")"
+  block="$(subsection "${DOC_PAGE}" "#### The session reviewer")"
   [[ -n "${block}" ]] || {
-    echo "${DOC_PATH} has no '### The repo-scoped runbook' subsection" >&2
+    echo "${DOC_PATH} has no '#### The session reviewer' subsection under the reflection runbooks" >&2
     return 1
   }
   grep -qF -- '/reflect-and-evolve' <<<"${block}" || {
     echo "the repo-scoped runbook subsection never names /reflect-and-evolve" >&2
     return 1
   }
-  grep -qF -- 'skills/reflect-and-evolve/SKILL.md' <<<"${block}" || {
-    echo "the subsection does not say the canonical body is skills/reflect-and-evolve/SKILL.md" >&2
+  grep -qF -- 'templates/common/reflect-and-evolve.SKILL.md' <<<"${block}" || {
+    echo "the subsection does not say the canonical body is templates/common/reflect-and-evolve.SKILL.md" >&2
     return 1
   }
 }

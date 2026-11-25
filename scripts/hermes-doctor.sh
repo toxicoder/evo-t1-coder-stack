@@ -59,7 +59,7 @@
 #   -h, --help               print this usage and exit 0
 #
 # Checks: approvals terminal-cwd write-root web-lane keyless-egress mcp-servers
-#   seed-drift mount-identity image-pin model-key dashboard memories
+#   seed-drift mount-identity image-pin model-key dashboard webapp-door memories
 #   anywhere-door (the API server and the push channel) agent-verbs (the coding-agent
 #   control plane the assistant drives)
 #
@@ -89,7 +89,7 @@ ROOT=""
 # The image this repo pins, read from the compose file at run time. The default
 # is what the audit compares a live container against when the compose file is
 # unreachable, so a stale default reads as drift rather than passing silently.
-HERMES_IMAGE_DEFAULT="nousresearch/hermes-agent:v0.22.5"
+HERMES_IMAGE_DEFAULT="nousresearch/hermes-agent:v0.23.2"
 
 # The web vendors with a bundled provider and a key env. Used only to answer
 # "is one of these present in this container" - the seed routes every search to
@@ -126,8 +126,8 @@ Subcommands: report (default, everything), posture (security and privacy),
 web (the search lane and its egress guards), diff (volume copy vs seed).
 
 Checks: approvals terminal-cwd write-root web-lane keyless-egress mcp-servers
-seed-drift mount-identity image-pin model-key dashboard memories anywhere-door
-agent-verbs
+seed-drift mount-identity image-pin model-key dashboard webapp-door memories
+anywhere-door agent-verbs
 
 Exit codes: 0 = every selected check passed; 1 = something failed;
 2 = unknown subcommand, unknown flag, or a flag with no value;
@@ -912,6 +912,61 @@ check_dashboard() {
   esac
 }
 
+# @function check_webapp_door
+# Report the second gateway listener upstream v0.23.0 added.
+#
+# The Webapp serves the Desktop workspace from the gateway on its own listener,
+# single-user and acting as the signed-in operator, and the dashboard's
+# basic-auth triple does not sit in front of it. It ships off and this stack
+# names it nowhere, so an answer of "on" can only come from an operator edit to
+# the config the container loads or from an env override compose never set -
+# which is why both are read, and why the config is read in the volume as well
+# as in the seed. The env form is tested under either name it may arrive with.
+# Globals:
+#   ROOT, ENV_FILE, COMPOSE_FILE, DRY_RUN
+# Arguments:
+#   None
+# Outputs:
+#   ok:, error:, or note: lines; never a value
+# Returns:
+#   0 always; a failure is recorded with fail_item
+check_webapp_door() {
+  local seed="${ROOT}/hermes/config.yaml" envf="" volume="" file="" block=""
+  local name="" value="" where=""
+  [ "${DRY_RUN}" -eq 1 ] && {
+    note "webapp door: not probed under --dry-run"
+    return 0
+  }
+  envf="${ENV_FILE:-$(dirname "${COMPOSE_FILE:-${ROOT}/docker-compose.yml}")/.env}"
+  volume="$(doctor_volume_dir || true)"
+  for file in "${seed}" "${volume}/config.yaml"; do
+    [ -f "${file}" ] || continue
+    block="$(sed -n '/^[[:space:]]*webapp:/,/^[^[:space:]]/p' "${file}")"
+    if printf '%s\n' "${block}" |
+      grep -qE '^[[:space:]]*enabled:[[:space:]]*(true|True|TRUE|yes|Yes|YES|on|On|ON|1)[[:space:]]*$'; then
+      where="${file}"
+      break
+    fi
+  done
+  if [ -z "${where}" ]; then
+    for name in HERMES_WEBAPP_ENABLED WEBAPP_ENABLED; do
+      value="$(doctor_env_of "${name}")"
+      [ -n "${value}" ] || value="$(env_get "${envf}" "${name}")"
+      case "${value}" in
+        1 | true | True | TRUE | yes | Yes | YES | on | On | ON)
+          where="the environment it was created with"
+          break
+          ;;
+      esac
+    done
+  fi
+  if [ -n "${where}" ]; then
+    fail_item "webapp is enabled (${where}): the Webapp listener is a second door no basic auth covers - set webapp.enabled back to false and drop the override"
+  else
+    ok "webapp door: closed, so the gateway has one listener and it is behind basic auth"
+  fi
+}
+
 # @function check_memories
 # Report the state of the assistant's own memory store.
 #
@@ -1009,6 +1064,10 @@ run_check() {
       section "dashboard"
       check_dashboard
       ;;
+    webapp-door)
+      section "webapp door"
+      check_webapp_door
+      ;;
     anywhere-door)
       section "anywhere door"
       check_anywhere_door
@@ -1047,11 +1106,11 @@ checks_for() {
     report)
       printf '%s\n' approvals terminal-cwd write-root web-lane keyless-egress \
         mcp-servers seed-drift mount-identity image-pin model-key dashboard \
-        memories anywhere-door agent-verbs
+        webapp-door memories anywhere-door agent-verbs
       ;;
     posture)
       printf '%s\n' approvals write-root keyless-egress mcp-servers model-key dashboard \
-        anywhere-door
+        webapp-door anywhere-door
       ;;
     web)
       printf '%s\n' web-lane keyless-egress mcp-servers

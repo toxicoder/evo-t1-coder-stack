@@ -1,5 +1,5 @@
 #!/bin/sh
-# tftpl: coder_script body; the three skill payloads are interpolated from the map
+# tftpl: coder_script body; the five skill payloads are interpolated from the map
 # main.tf passes, each into a quoted here-doc so no shell text inside one is expanded.
 # Why these seeds ride their own script instead of startup.sh.tftpl: the agent execs
 # every body as one argument; docs/coder-templates.md#the-one-argument-ceiling.
@@ -17,6 +17,10 @@ ${boot_log_lib}
 # beside: create-skill is a bundled platform skill needing an x.ai sign-in this stack
 # lacks, and /flush, /dream, /remember and /memory are built-in memory commands gated
 # on a memory store that is off by default; docs/grok-build-and-agents.md.
+#
+# The two reflection runbooks ride here too: like the authoring trio they are a
+# single-agent procedure over the operator's own session and notes data, and
+# /reflect-and-evolve reads the /ez-learn logs that trio writes.
 
 boot_begin "stack skills" 2
 
@@ -51,6 +55,61 @@ EZ_CREATE_SKILL_SKILL_MD_EOF
   boot_ok "ez-create-skill SKILL.md written into the coder skills home"
 else
   boot_note "ez-create-skill SKILL.md left alone, the coder copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.coder/skills/reflect-and-evolve/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/reflect-and-evolve" 2>/dev/null
+  cat >"$HOME/.coder/skills/reflect-and-evolve/SKILL.md" <<'REFLECT_AND_EVOLVE_SKILL_MD_EOF'
+${reflect_and_evolve_skill}
+REFLECT_AND_EVOLVE_SKILL_MD_EOF
+  boot_ok "reflect-and-evolve SKILL.md written into the coder skills home"
+else
+  boot_note "reflect-and-evolve SKILL.md left alone, the coder copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.coder/skills/reflect-and-evolve-repo/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/reflect-and-evolve-repo" 2>/dev/null
+  cat >"$HOME/.coder/skills/reflect-and-evolve-repo/SKILL.md" <<'REFLECT_AND_EVOLVE_REPO_SKILL_MD_EOF'
+${reflect_and_evolve_repo_skill}
+REFLECT_AND_EVOLVE_REPO_SKILL_MD_EOF
+  boot_ok "reflect-and-evolve-repo SKILL.md written into the coder skills home"
+else
+  boot_note "reflect-and-evolve-repo SKILL.md left alone, the coder copy is the operator's own"
+fi
+
+# The two reflection runbooks shell out to these rather than carrying the text inline:
+# each body names the ~/.agents path of its sweeper and its checklist, so each helper is
+# seeded beside its SKILL.md (under scripts/ or references/) and needs its twin exactly
+# as much as the body does. Same absent-only contract as every block above.
+
+if [ ! -f "$HOME/.coder/skills/reflect-and-evolve/scripts/session_signals.py" ]; then
+  mkdir -p "$HOME/.coder/skills/reflect-and-evolve/scripts" 2>/dev/null
+  cat >"$HOME/.coder/skills/reflect-and-evolve/scripts/session_signals.py" <<'REFLECT_AND_EVOLVE_SESSION_SIGNALS_PY_EOF'
+${reflect_and_evolve_session_signals}
+REFLECT_AND_EVOLVE_SESSION_SIGNALS_PY_EOF
+  boot_ok "session_signals.py written into the coder skills home"
+else
+  boot_note "session_signals.py left alone, the coder copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.coder/skills/reflect-and-evolve/references/checklist.md" ]; then
+  mkdir -p "$HOME/.coder/skills/reflect-and-evolve/references" 2>/dev/null
+  cat >"$HOME/.coder/skills/reflect-and-evolve/references/checklist.md" <<'REFLECT_AND_EVOLVE_CHECKLIST_MD_EOF'
+${reflect_and_evolve_checklist}
+REFLECT_AND_EVOLVE_CHECKLIST_MD_EOF
+  boot_ok "reflect-and-evolve checklist.md written into the coder skills home"
+else
+  boot_note "reflect-and-evolve checklist.md left alone, the coder copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.coder/skills/reflect-and-evolve-repo/references/checklist.md" ]; then
+  mkdir -p "$HOME/.coder/skills/reflect-and-evolve-repo/references" 2>/dev/null
+  cat >"$HOME/.coder/skills/reflect-and-evolve-repo/references/checklist.md" <<'REFLECT_AND_EVOLVE_REPO_CHECKLIST_MD_EOF'
+${reflect_and_evolve_repo_checklist}
+REFLECT_AND_EVOLVE_REPO_CHECKLIST_MD_EOF
+  boot_ok "reflect-and-evolve-repo checklist.md written into the coder skills home"
+else
+  boot_note "reflect-and-evolve-repo checklist.md left alone, the coder copy is the operator's own"
 fi
 
 boot_stage 2 "the cp twin into $HOME/.agents/skills"
@@ -95,6 +154,71 @@ if [ ! -f "$HOME/.agents/skills/ez-create-skill/SKILL.md" ]; then
   fi
 else
   boot_note "ez-create-skill twin left alone, the agents copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.agents/skills/reflect-and-evolve/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/reflect-and-evolve" 2>/dev/null
+  cp "$HOME/.coder/skills/reflect-and-evolve/SKILL.md" \
+    "$HOME/.agents/skills/reflect-and-evolve/SKILL.md" 2>/dev/null
+  if [ -f "$HOME/.agents/skills/reflect-and-evolve/SKILL.md" ]; then
+    boot_ok "reflect-and-evolve twin copied into the agents skills home"
+  else
+    boot_warn "reflect-and-evolve twin did not land in the agents skills home"
+  fi
+else
+  boot_note "reflect-and-evolve twin left alone, the agents copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.agents/skills/reflect-and-evolve-repo/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/reflect-and-evolve-repo" 2>/dev/null
+  cp "$HOME/.coder/skills/reflect-and-evolve-repo/SKILL.md" \
+    "$HOME/.agents/skills/reflect-and-evolve-repo/SKILL.md" 2>/dev/null
+  if [ -f "$HOME/.agents/skills/reflect-and-evolve-repo/SKILL.md" ]; then
+    boot_ok "reflect-and-evolve-repo twin copied into the agents skills home"
+  else
+    boot_warn "reflect-and-evolve-repo twin did not land in the agents skills home"
+  fi
+else
+  boot_note "reflect-and-evolve-repo twin left alone, the agents copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.agents/skills/reflect-and-evolve/scripts/session_signals.py" ]; then
+  mkdir -p "$HOME/.agents/skills/reflect-and-evolve/scripts" 2>/dev/null
+  cp "$HOME/.coder/skills/reflect-and-evolve/scripts/session_signals.py" \
+    "$HOME/.agents/skills/reflect-and-evolve/scripts/session_signals.py" 2>/dev/null
+  if [ -f "$HOME/.agents/skills/reflect-and-evolve/scripts/session_signals.py" ]; then
+    boot_ok "session_signals.py twin copied into the agents skills home"
+  else
+    boot_warn "session_signals.py twin did not land in the agents skills home"
+  fi
+else
+  boot_note "session_signals.py twin left alone, the agents copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.agents/skills/reflect-and-evolve/references/checklist.md" ]; then
+  mkdir -p "$HOME/.agents/skills/reflect-and-evolve/references" 2>/dev/null
+  cp "$HOME/.coder/skills/reflect-and-evolve/references/checklist.md" \
+    "$HOME/.agents/skills/reflect-and-evolve/references/checklist.md" 2>/dev/null
+  if [ -f "$HOME/.agents/skills/reflect-and-evolve/references/checklist.md" ]; then
+    boot_ok "reflect-and-evolve checklist.md twin copied into the agents skills home"
+  else
+    boot_warn "reflect-and-evolve checklist.md twin did not land in the agents skills home"
+  fi
+else
+  boot_note "reflect-and-evolve checklist.md twin left alone, the agents copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.agents/skills/reflect-and-evolve-repo/references/checklist.md" ]; then
+  mkdir -p "$HOME/.agents/skills/reflect-and-evolve-repo/references" 2>/dev/null
+  cp "$HOME/.coder/skills/reflect-and-evolve-repo/references/checklist.md" \
+    "$HOME/.agents/skills/reflect-and-evolve-repo/references/checklist.md" 2>/dev/null
+  if [ -f "$HOME/.agents/skills/reflect-and-evolve-repo/references/checklist.md" ]; then
+    boot_ok "reflect-and-evolve-repo checklist.md twin copied into the agents skills home"
+  else
+    boot_warn "reflect-and-evolve-repo checklist.md twin did not land in the agents skills home"
+  fi
+else
+  boot_note "reflect-and-evolve-repo checklist.md twin left alone, the agents copy is the operator's own"
 fi
 
 boot_summary
