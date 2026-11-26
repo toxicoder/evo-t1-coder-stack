@@ -1091,10 +1091,13 @@ syntax with `bind: {create_host_path: false}` instead of the `KEY:TARGET:ro` sho
 precisely for those hosts, because the short form auto-creates a source the host does not
 have as a root-owned **directory** - at the container target, where `file("/etc/timezone")`
 then reads a directory and fails, and on the host, where it survives `docker compose down`
-and misleads the next `dpkg-reconfigure tzdata`. Refusing is the better half of that trade:
-`docker compose up` stops at the `coder` service with
-`bind source path does not exist: /etc/timezone` and creates nothing anywhere, and the host
-grows the file in one command:
+and misleads the next `dpkg-reconfigure tzdata`. Refusing is the better half of that trade,
+and the bring-up now asks that question first: `bazelisk run //scripts:prod-stack -- up` and
+its `dev-stack` twin call `host_clock_files_report` (`scripts/lib/host_state.sh`) before
+compose runs, and print the fix line naming the host command that grows the file. The
+daemon's own refusal - `bind source path does not exist: /etc/timezone`, and no directory
+created at either end - is what still catches a hand-run `docker compose up`. Either way the
+host grows the file in one command:
 
 ```sh
 printf '%s\n' Area/City >/etc/timezone # as root; or: dpkg-reconfigure tzdata
