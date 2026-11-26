@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
 #
-# ## host_state.sh - host DNS diagnosis and leftover-runfiles repair (sourced;
-# never executed).
+# ## host_state.sh - host DNS diagnosis, leftover-runfiles repair, and the host
+# clock binds (sourced; never executed).
 #
-# Two host problems show up right after a git pull and a stack `up`, and neither
-# is a compose bug:
+# Three host problems show up right after a git pull and a stack `up`, and none
+# of them is a compose bug:
 #
 #   - Docker (and Kasm's privileged nested dockerd) can leave bind-mounted
 #     payload files in Bazel's runfiles tree owned by root, or replace a file
@@ -24,11 +24,21 @@
 #     host resolver itself: a systemd-resolved drop-in (1.1.1.1 / 8.8.8.8)
 #     plus `tailscale set --accept-dns=false`, with MagicDNS kept for `ts.net`
 #     via a resolved split-DNS binding when resolvectl is present.
+#   - The coder service bind-mounts the host's /etc/timezone and /etc/localtime
+#     read-only, both with `bind: {create_host_path: false}`, so that a host which
+#     ships neither (Fedora, Arch, an alpine base, or a Debian image whose tzdata
+#     postinst never wrote the file) gets a refused create instead of a Docker-made
+#     root-owned directory at those paths. The daemon's line -
+#     `bind source path does not exist: /etc/timezone` - names no remedy and lands
+#     mid-`up`, where the runner's only advice is the db logs.
+#     `host_clock_files_report` asks that question before compose runs and prints
+#     the host command that grows the file.
 #
-# These helpers diagnose both, repair the runfiles leftover, and (on Linux)
-# install that public-DNS pair. `--check` still writes nothing. Test seams:
-# SETUP_SKIP_DNS=1, SETUP_DNS_DRY_RUN=1, SETUP_DNS_OS, SETUP_DNS_LOOKUP,
-# SETUP_RESOLV_CONF, SETUP_RESOLVED_DROPIN.
+# These helpers diagnose both DNS and the clock binds, repair the runfiles
+# leftover, and (on Linux) install that public-DNS pair. `--check` still writes
+# nothing. Test seams: SETUP_SKIP_DNS=1, SETUP_DNS_DRY_RUN=1, SETUP_DNS_OS,
+# SETUP_DNS_LOOKUP, SETUP_RESOLV_CONF, SETUP_RESOLVED_DROPIN,
+# HOST_TIMEZONE_FILE, HOST_LOCALTIME_LINK, HOST_ZONEINFO_DIR.
 #
 # Usage (from an entry script, after `set -euo pipefail`):
 #   # shellcheck source=lib/host_state.sh disable=SC1091
@@ -613,6 +623,188 @@ report_stale_runfiles() {
   else
     warn "runfiles: ${n} leftover path(s) will make bazelisk run fail with Permission denied"
     note "Repair with: bash scripts/setup-host.sh --repair"
+  fi
+  return 0
+}
+
+# @function compose_binds_host_path
+# Decide whether a compose file asks the daemon to bind-mount one absolute host
+# path. A compose file that never binds the path has no source to satisfy, so the
+# clock check stays out of a bring-up it has nothing to say about.
+# Globals:
+#   None
+# Arguments:
+#   $1 - compose file to read
+#   $2 - the absolute host path to look for
+# Outputs:
+#   Nothing
+# Returns:
+#   0 when a bind source in that file names the path exactly, 1 when none does -
+#   including the unresolvable cases, which answer 1 on purpose: `${VAR:-/etc/timezone}`
+#   cuts to `${VAR` and a bare `${VAR}` stays itself, and a source this shell cannot
+#   resolve is a source it must not refuse a bring-up over. Compose, and the daemon
+#   behind it, stay the authority for a spelling this parser cannot read.
+compose_binds_host_path() {
+  local compose_file="${1:-}" want="${2:-}" sources=""
+  if [[ -z ${compose_file} || ! -r ${compose_file} || -z ${want} ]]; then
+    return 1
+  fi
+  # The three spellings a bind source takes: the long form's `source: <path>` record,
+  # the short form's `- <path>:<container>[:ro]` item, and the one-line list-of-maps
+  # `- source: <path>`, which the two prefix strips cover in turn. Each value is then
+  # cut at its first colon (where the short form's container side starts), at a
+  # trailing comment, and at trailing blanks, and only absolute values survive - that
+  # last filter is what keeps a named volume's `- coder-home:/home/coder` from reading
+  # as a bind of a path called `coder-home`.
+  #
+  # The extraction is materialised before the match on purpose. `... | grep -q` would
+  # let grep exit at the first hit, kill the upstream sed with SIGPIPE, and have the
+  # runners' `set -o pipefail` report that as "not bound" - the check failing open on
+  # exactly the compose file that does bind the path.
+  sources="$(
+    sed -E -e 's/^[[:space:]]*-+[[:space:]]+//' -e 's/^[[:space:]]*source:[[:space:]]*//' \
+      "${compose_file}" |
+      sed -E -e 's/:.*$//' -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]+$//' |
+      sed -nE -e '/^\//p'
+  )" || sources=""
+  grep -Fxq -- "${want}" <<<"${sources}"
+}
+
+# @function host_clock_zone_name
+# Print the IANA zone this host's own clock config already answers, so the fix line
+# for a missing clock file carries the zone the machine actually runs in rather than
+# a placeholder an operator has to look up. The timezone file is read first and the
+# localtime link second, the same order templates/common/tz.sh walks; the link is
+# read, not resolved, because a copied TZif file carries no name.
+# Globals:
+#   None
+# Arguments:
+#   $1 - timezone file path   (default $HOST_TIMEZONE_FILE or /etc/timezone)
+#   $2 - localtime link path  (default $HOST_LOCALTIME_LINK or /etc/localtime)
+#   $3 - zoneinfo tree        (default $HOST_ZONEINFO_DIR or /usr/share/zoneinfo)
+# Outputs:
+#   One zone name on stdout when a source named one, nothing when neither did
+# Returns:
+#   0 when a name was printed, 1 when no source named a usable zone
+host_clock_zone_name() {
+  local tz_file="${1:-${HOST_TIMEZONE_FILE:-/etc/timezone}}"
+  local localtime_link="${2:-${HOST_LOCALTIME_LINK:-/etc/localtime}}"
+  local zoneinfo="${3:-${HOST_ZONEINFO_DIR:-/usr/share/zoneinfo}}"
+  local link="" text="" candidate=""
+  if [[ -f ${tz_file} ]]; then
+    IFS= read -r text <"${tz_file}" || true
+    text="${text//[[:space:]]/}"
+  fi
+  link="$(readlink -- "${localtime_link}" 2>/dev/null || true)"
+  case "${link}" in
+    *zoneinfo/*) link="${link##*zoneinfo/}" ;;
+    *) link="" ;;
+  esac
+  # Each source gets its own chance and the first usable answer wins, the way
+  # templates/common/tz.sh walks them: a hand-edited timezone file holding a POSIX
+  # rule string has to fall through to a healthy localtime link rather than answer
+  # nothing on its own.
+  for candidate in "${text}" "${link}"; do
+    [[ -n ${candidate} ]] || continue
+    [[ ${candidate} =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] || continue
+    if [[ -d ${zoneinfo} ]]; then
+      # The tree is the only thing that tells a zone name from a stray string, so a
+      # host that has one gets the check.
+      [[ -f ${zoneinfo}/${candidate} ]] || continue
+    elif [[ ${candidate} != */* ]]; then
+      # With no tree to ask, trust only a name that came out of a zoneinfo path, the
+      # way templates/common/tz.sh does, so a POSIX rule string sitting in a
+      # hand-edited timezone file (TZ="EST5EDT") never lands in the fix line.
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done
+  return 1
+}
+
+# @function host_clock_files_report
+# Check the host clock files a compose file bind-mounts into the coder service
+# read-only, and print the host command that grows a missing one. Both binds carry
+# `bind: {create_host_path: false}` on purpose (see docker-compose.yml), so the
+# daemon refuses the create rather than inventing a root-owned directory that would
+# outlive `compose down` and mislead the next dpkg-reconfigure tzdata. This asks the
+# same question before anything is fetched or created, so the operator reads the fix
+# instead of a daemon line that names none.
+# Globals:
+#   HOST_TIMEZONE_FILE, HOST_LOCALTIME_LINK, HOST_ZONEINFO_DIR - path overrides,
+#   mostly so the suites can aim the check at a scratch tree
+# Arguments:
+#   $1 - compose file whose bind sources decide what is checked (empty: check both)
+#   $2 - timezone file path   (default $HOST_TIMEZONE_FILE or /etc/timezone)
+#   $3 - localtime link path  (default $HOST_LOCALTIME_LINK or /etc/localtime)
+#   $4 - zoneinfo tree        (default $HOST_ZONEINFO_DIR or /usr/share/zoneinfo)
+# Outputs:
+#   Nothing when every clock bind the compose file declares has a source; otherwise
+#   one error line per unsatisfied path, with the note lines that carry the fix. A
+#   named-but-unreadable compose file prints nothing at all: compose cannot read it
+#   either, and its own error is the one the operator needs.
+# Returns:
+#   0 when compose will find every clock source it asks for, 1 when one is missing,
+#   is sitting at that path as a directory, or is a link pointing at nothing
+host_clock_files_report() {
+  local compose_file="${1:-}"
+  local tz_file="${2:-${HOST_TIMEZONE_FILE:-/etc/timezone}}"
+  local localtime_link="${3:-${HOST_LOCALTIME_LINK:-/etc/localtime}}"
+  local zoneinfo="${4:-${HOST_ZONEINFO_DIR:-/usr/share/zoneinfo}}"
+  local bad=0 role="" src="" reason="" zone="" zone_ok=0
+  zone="$(host_clock_zone_name "${tz_file}" "${localtime_link}" "${zoneinfo}")" || zone=""
+  if [[ -n ${zone} && -f ${zoneinfo}/${zone} ]]; then
+    zone_ok=1
+  fi
+
+  for role in timezone localtime; do
+    if [[ ${role} == "timezone" ]]; then
+      src="${tz_file}"
+    else
+      src="${localtime_link}"
+      # Two seams naming one path is one bind, and the timezone pass spoke for it.
+      if [[ ${src} == "${tz_file}" ]]; then
+        continue
+      fi
+    fi
+    if [[ -n ${compose_file} ]]; then
+      [[ -r ${compose_file} ]] || return 0
+      compose_binds_host_path "${compose_file}" "${src}" || continue
+    fi
+    if [[ -d ${src} ]]; then
+      reason="is a directory, which is what the short KEY:TARGET:ro form leaves behind on a host that had no such file"
+    elif [[ ! -e ${src} ]]; then
+      if [[ -L ${src} ]]; then
+        reason="is a symlink whose target is gone"
+      else
+        reason="does not exist on this host"
+      fi
+    else
+      continue
+    fi
+    bad=1
+    err "${src} ${reason}, and the coder service bind-mounts it read-only with create_host_path: false, so docker compose will refuse the create"
+    if [[ -d ${src} ]]; then
+      note "Remove the leftover first: sudo rm -rf ${src}"
+    fi
+    if [[ ${role} == "timezone" ]]; then
+      # Text into a file the workspace resolver re-validates, so the Area/City
+      # placeholder is a prompt here the way docs/coder-templates.md uses it.
+      note "Fix on the host: printf '%s\\n' ${zone:-Area/City} | sudo tee ${src} >/dev/null"
+    elif [[ ${zone_ok} -eq 1 ]]; then
+      note "Fix on the host: sudo ln -sfn ${zoneinfo}/${zone} ${src}"
+    else
+      # No copy-paste line on purpose: linking at a zone this host cannot name would
+      # leave a dangling /etc/localtime, and glibc answers UTC for that, which is the
+      # very clock this seam exists to keep off the containers.
+      note "${src} needs a link at a real file under ${zoneinfo}; sudo dpkg-reconfigure tzdata writes both files."
+    fi
+  done
+
+  if [[ ${bad} -eq 1 ]]; then
+    note "sudo dpkg-reconfigure tzdata writes both files; setting TZ in the env file pins the zone the containers get but does not rescue a missing bind source."
+    return 1
   fi
   return 0
 }

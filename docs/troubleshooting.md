@@ -66,7 +66,49 @@ The same command with `dev-stack` brings the dev project up. A leftover
 A failed bind from an older runfiles compose file can also leave a **directory**
 (or a root-owned file) at `homepage/assets/icons/evo-t1.svg` inside
 `bazel-out/.../prod-stack.runfiles`. The next `bazelisk run` then dies before
-the stack script starts; that spelling is the next heading.
+the stack script starts; that spelling has its own heading below.
+
+### `bind source path does not exist: /etc/timezone` -> the host ships no clock file
+
+Cause: the `coder` service bind-mounts the host's `/etc/timezone` and
+`/etc/localtime` read-only, and this host has no `/etc/timezone` to hand over.
+That file is a Debian-derivative convention: a Fedora, Arch, or alpine-based
+host carries only `/etc/localtime`, and an Ubuntu or Debian host whose `tzdata`
+postinst never ran - or a hand-cleaned image - can lack it too. Ask with
+`ls -l /etc/timezone /etc/localtime`; that says which of the two is missing.
+
+Both binds are there so `file("/etc/timezone")` in both `templates/*/main.tf`
+reads the machine under the container and every workspace's agent env `TZ`
+resolves from it, and each carries `bind: {create_host_path: false}` so a host
+that ships neither gets a refused create instead of a root-owned **directory**
+Docker invented at that path - on the host as well as in the container, where it
+outlives `compose down` and misleads the next `dpkg-reconfigure tzdata`.
+
+Fix: `bazelisk run //scripts:prod-stack -- up`, and the same `dev-stack` verb,
+now ask that question before the vault is dialed or compose runs, through
+`host_clock_files_report` (`scripts/lib/host_state.sh`), and print the host
+command with the zone read off this machine's own `/etc/localtime`. Run that
+line, then re-run:
+
+```sh
+printf '%s\n' America/Chicago | sudo tee /etc/timezone >/dev/null
+bazelisk run //scripts:prod-stack -- up
+```
+
+The zone in that line is the one the check read off the host, so your run names
+your own; a host whose clock config answers nothing prints `Area/City` there and
+you substitute the real name. The `sudo ln -sfn` line for `/etc/localtime`
+appears only when that zone names a real file under `/usr/share/zoneinfo` - with
+nothing to copy the check points at `dpkg-reconfigure tzdata` rather than print a
+link that would dangle, because a dangling `/etc/localtime` answers UTC. Setting
+`TZ` in the env file pins the zone the containers get but does not rescue the
+missing bind source, because the bind is checked before the container starts.
+
+If `ls` showed a directory rather than nothing, that is the leftover of the old
+short-form bind: `sudo rm -rf /etc/timezone` first, then write the file. On a
+Debian-derivative host `sudo dpkg-reconfigure tzdata` writes both files. A
+hand-run `docker compose up` still answers with the daemon line this heading
+quotes, since the preflight lives in the stack runners.
 
 ### `FileAccessException` / `Permission denied` on `homepage/assets/icons/evo-t1.svg` -> leftover runfiles bind-mount
 

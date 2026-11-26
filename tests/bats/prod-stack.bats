@@ -40,6 +40,15 @@ setup() {
   export STUB_LOG="${BATS_TEST_TMPDIR}/stub-logs"
   mkdir -p "${STUB_LOG}"
   use_stubs docker docker-compose
+  # `up` refuses before compose when a clock file the coder service bind-mounts
+  # read-only has no source on this host (scripts/lib/host_state.sh:
+  # host_clock_files_report), and the compose file every `up` test copies names
+  # the literal /etc/timezone, which a host may genuinely not ship. Point both
+  # seams at names no scratch compose file here contains, so the preflight skips
+  # and those tests drive compose exactly as they did before. The clock tests
+  # below move the two seams onto fixtures they own.
+  export HOST_TIMEZONE_FILE="${BATS_TEST_TMPDIR}/clock-skipped-timezone"
+  export HOST_LOCALTIME_LINK="${BATS_TEST_TMPDIR}/clock-skipped-localtime"
 }
 
 @test "prod-stack: an unknown subcommand prints the usage and touches nothing" {
@@ -577,6 +586,254 @@ ENV
   assert_match "note" 'last db logs follow' "${stderr}"
   assert_match "unhealthy body" 'evo-t1-prod-db-1 is unhealthy' "${output}"
   assert_not_match "no bounce" 'restart coder' "$(stub_log docker)"
+}
+
+# --- the clock binds are proven before compose is asked -------------------------
+# The coder service bind-mounts the host's timezone file and localtime link
+# read-only, both with bind.create_host_path: false, so a host that ships neither
+# used to fail mid-`up`: the daemon refused the create partway through the
+# project, its line named no remedy, and the only advice this verb then printed
+# was the db logs. `up` asks that question before compose runs, so what is pinned
+# here is the refusal (the fix line, nothing created, the vault never dialed), the
+# untouched bring-up on a host that does carry both sources, and the two shapes
+# the guard has to stay silent about: a compose file that binds neither path, and
+# a source spelled as an interpolation.
+#
+# Every fixture lives in the compose file, not just on disk: before the check
+# looks at the host it asks host_state.sh:compose_binds_host_path whether a bind
+# SOURCE names that path exactly, and skips a path that file does not bind. That
+# is also how the setup() seam keeps the other `up` tests off this path - the
+# seams name paths no compose file here binds. So a refusing case writes the
+# fixture path into a `source:` line, and a proceeding case either turns that
+# record into a comment or spells it so this shell cannot resolve it.
+
+# clock_workspace <workspace> <tz_src> <localtime_src> - a scratch checkout whose
+# compose file names the two clock bind sources at the paths the test hands it.
+clock_workspace() {
+  local workspace="${1}" tz_src="${2}" localtime_src="${3}"
+  mkdir -p "${workspace}"
+  sed -e "s|/etc/timezone|${tz_src}|g" \
+    -e "s|/etc/localtime|${localtime_src}|g" \
+    "${REPO_ROOT}/docker-compose.yml" >"${workspace}/docker-compose.yml"
+}
+
+# clock_workspace_unbound <workspace> <tz_src> <localtime_src> - a scratch
+# checkout whose compose file keeps every coder-service mount but binds neither
+# clock path: each long-form `source:` record becomes a comment that still names
+# the host path, and the `target:` line stays under it. Reading the file as text
+# would find both paths in it; only an exact bind-source reading tells a mount
+# from a mention.
+clock_workspace_unbound() {
+  local workspace="${1}" tz_src="${2}" localtime_src="${3}"
+  mkdir -p "${workspace}"
+  sed -E \
+    -e "s|^[[:space:]]*source:[[:space:]]*/etc/timezone[[:space:]]*\$|        # unbound: ${tz_src} stays inside the image|" \
+    -e "s|^[[:space:]]*source:[[:space:]]*/etc/localtime[[:space:]]*\$|        # unbound: ${localtime_src} stays inside the image|" \
+    "${REPO_ROOT}/docker-compose.yml" >"${workspace}/docker-compose.yml"
+}
+
+# clock_workspace_interpolated <workspace> <tz_src> <localtime_src> - a scratch
+# checkout that binds the two clock paths the way a parameterised compose file
+# does, as source: ${STACK_TZ:-<path>}. The guard reads no environment, so it
+# cannot resolve either spelling.
+clock_workspace_interpolated() {
+  local workspace="${1}" tz_src="${2}" localtime_src="${3}"
+  mkdir -p "${workspace}"
+  sed -e "s|source: /etc/timezone|source: \${STACK_TZ:-${tz_src}}|" \
+    -e "s|source: /etc/localtime|source: \${STACK_TZ:-${localtime_src}}|" \
+    "${REPO_ROOT}/docker-compose.yml" >"${workspace}/docker-compose.yml"
+}
+
+# clock_zoneinfo <dir> - the one-zone tree the fix line names, under <dir>. The
+# directory keeps the literal zoneinfo component because that component is what
+# tells a zone name from a stray string when the fix line is composed.
+clock_zoneinfo() {
+  local dir="${1}"
+  mkdir -p "${dir}/zoneinfo/Europe"
+  : >"${dir}/zoneinfo/Europe/Berlin"
+}
+
+@test "prod-stack: up refuses before compose when the host lacks the timezone file it binds" {
+  # The decisive assertion is the compose log: a refusal that arrived after
+  # `up -d` would have created half a project and dumped the db logs, which is
+  # the run this preflight exists to prevent. The localtime source is a live
+  # symlink into the fake tree, so only the absent file is blamed.
+  local workspace clock tz lt
+  workspace="$(make_scratch)/workspace"
+  clock="${BATS_TEST_TMPDIR}/clock"
+  tz="${clock}/absent-timezone"
+  lt="${clock}/host-localtime"
+  clock_workspace "${workspace}" "${tz}" "${lt}"
+  clock_zoneinfo "${clock}"
+  ln -s "${clock}/zoneinfo/Europe/Berlin" "${lt}"
+
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    HOST_TIMEZONE_FILE="${tz}" HOST_LOCALTIME_LINK="${lt}" \
+    HOST_ZONEINFO_DIR="${clock}/zoneinfo" \
+    bash "${STACK}" up
+  [ "${status}" -ne 0 ]
+  assert_match "the error names the missing source" \
+    "^error: ${tz} does not exist on this host" "${stderr}"
+  assert_match "it says why compose would refuse" \
+    'the coder service bind-mounts it read-only with create_host_path: false, so docker compose will refuse the create' \
+    "${stderr}"
+  assert_not_match "the healthy source is not blamed" "^error: ${lt}" "${stderr}"
+
+  local fix_line
+  fix_line="$(grep -F -e "sudo tee ${tz} >/dev/null" <<<"${output}" | head -n1 || true)"
+  assert_eq "the note carries the host command, naming the zone the host runs in" \
+    "note: Fix on the host: printf '%s\n' Europe/Berlin | sudo tee ${tz} >/dev/null" "${fix_line}"
+  assert_match "it names the one-shot repair" 'sudo dpkg-reconfigure tzdata writes both files' "${output}"
+  assert_match "refused" 'compose up refused: this host lacks a clock file' "${stderr}"
+
+  assert_not_match "compose never ran" 'up -d' "$(stub_log docker)"
+  [ "$(stub_log_count docker)" -eq 0 ]
+  assert_file_not_exists "nothing was created at the bind source" "${tz}"
+}
+
+@test "prod-stack: up comes up when the host carries both clock sources" {
+  # The same compose file with both sources present: the preflight has nothing to
+  # say, says nothing, and the bring-up is the run the three tests above pin.
+  local workspace clock tz lt
+  workspace="$(make_scratch)/workspace"
+  clock="${BATS_TEST_TMPDIR}/clock"
+  tz="${clock}/host-timezone"
+  lt="${clock}/host-localtime"
+  clock_workspace "${workspace}" "${tz}" "${lt}"
+  clock_zoneinfo "${clock}"
+  printf 'Europe/Berlin\n' >"${tz}"
+  ln -s "${clock}/zoneinfo/Europe/Berlin" "${lt}"
+
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    HOST_TIMEZONE_FILE="${tz}" HOST_LOCALTIME_LINK="${lt}" \
+    HOST_ZONEINFO_DIR="${clock}/zoneinfo" \
+    bash "${STACK}" up
+  [ "${status}" -eq 0 ]
+  assert_not_match "nothing is refused" 'compose up refused' "${output}${stderr}"
+  assert_not_match "no fix note on a healthy host" 'Fix on the host' "${output}"
+  assert_match "compose up" 'up -d' "$(stub_log docker)"
+}
+
+@test "prod-stack: up proceeds when the compose file binds neither clock path" {
+  # A bring-up this host cannot satisfy is only a problem if something asks for
+  # it. This compose file still names both missing paths - once in the comment
+  # that replaced the bind and once as a `target:` - but binds neither, so
+  # refusing here would block a create no one asked the daemon to make. The seams
+  # name paths that do not exist on this host, which is what makes the guard's
+  # reading of the file the only thing between this run and a dead bring-up.
+  local workspace bound compose tz lt log
+  workspace="$(make_scratch)/workspace"
+  clock="${BATS_TEST_TMPDIR}/clock"
+  tz="${clock}/absent-timezone"
+  lt="${clock}/absent-localtime"
+  clock_workspace_unbound "${workspace}" "${tz}" "${lt}"
+  compose="${workspace}/docker-compose.yml"
+  assert_contains_file "the missing path is still named in the file" "${compose}" "${tz}"
+  assert_not_match "but no bind source names it" "source:[[:space:]]*${tz}" "$(cat "${compose}")"
+
+  # The control that keeps the two assertions below honest: same host, same
+  # seams, and the same two paths written as a bind source, which does refuse. A
+  # run that proceeded here would mean the check never fired at all.
+  clock_workspace "${workspace}-bound" "${tz}" "${lt}"
+  bound="${workspace}-bound/docker-compose.yml"
+  log="${STUB_LOG}/docker.log"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    HOST_TIMEZONE_FILE="${tz}" HOST_LOCALTIME_LINK="${lt}" \
+    HOST_ZONEINFO_DIR="${clock}/zoneinfo" \
+    bash "${STACK}" up --file "${bound}"
+  [ "${status}" -ne 0 ]
+  assert_match "the bound spelling of the same paths is refused" \
+    'compose up refused: this host lacks a clock file' "${stderr}"
+
+  : >"${log}"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    HOST_TIMEZONE_FILE="${tz}" HOST_LOCALTIME_LINK="${lt}" \
+    HOST_ZONEINFO_DIR="${clock}/zoneinfo" \
+    bash "${STACK}" up --file "${compose}"
+  [ "${status}" -eq 0 ]
+  assert_not_match "nothing is refused" 'compose up refused' "${output}${stderr}"
+  assert_not_match "the preflight stayed silent" "^error: ${tz}" "${stderr}"
+  assert_match "compose up" 'up -d' "$(stub_log docker)"
+  assert_match "compose was handed that very file" \
+    " -p evo-t1-prod -f ${compose} up -d\$" "$(stub_log docker)"
+}
+
+@test "prod-stack: up proceeds when a clock bind source is an interpolation" {
+  # source: ${STACK_TZ:-<path>} is a source this shell cannot resolve without
+  # running compose's own interpolation, and the guard reads no environment. It
+  # answers "not bound" and stays out: holding the stack down over a value it
+  # cannot see would be worse than letting compose - and the daemon behind it -
+  # answer for the spelling the operator wrote. The fixture names the missing
+  # path inside the interpolation, so only the unresolvable form keeps this run
+  # off the refusal path.
+  local workspace bound compose tz lt log
+  workspace="$(make_scratch)/workspace"
+  clock="${BATS_TEST_TMPDIR}/clock"
+  tz="${clock}/absent-timezone"
+  lt="${clock}/absent-localtime"
+  clock_workspace_interpolated "${workspace}" "${tz}" "${lt}"
+  compose="${workspace}/docker-compose.yml"
+  assert_contains_file "the unresolvable source still names the path" "${compose}" \
+    "source: .*STACK_TZ:-${tz}"
+
+  # Same control as the case above: the literal spelling of those two sources,
+  # which this host cannot satisfy, does refuse.
+  clock_workspace "${workspace}-bound" "${tz}" "${lt}"
+  bound="${workspace}-bound/docker-compose.yml"
+  log="${STUB_LOG}/docker.log"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    HOST_TIMEZONE_FILE="${tz}" HOST_LOCALTIME_LINK="${lt}" \
+    HOST_ZONEINFO_DIR="${clock}/zoneinfo" \
+    bash "${STACK}" up --file "${bound}"
+  [ "${status}" -ne 0 ]
+  assert_match "the bound spelling of the same paths is refused" \
+    'compose up refused: this host lacks a clock file' "${stderr}"
+
+  : >"${log}"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    HOST_TIMEZONE_FILE="${tz}" HOST_LOCALTIME_LINK="${lt}" \
+    HOST_ZONEINFO_DIR="${clock}/zoneinfo" \
+    bash "${STACK}" up --file "${compose}"
+  [ "${status}" -eq 0 ]
+  assert_not_match "nothing is refused" 'compose up refused' "${output}${stderr}"
+  assert_not_match "the preflight stayed silent" "^error: ${tz}" "${stderr}"
+  assert_match "compose up" 'up -d' "$(stub_log docker)"
+  assert_match "compose was handed that very file" \
+    " -p evo-t1-prod -f ${compose} up -d\$" "$(stub_log docker)"
+}
+
+@test "prod-stack: a refused clock preflight dials neither the vault nor compose" {
+  # The check sits before the vault pull, so the refusing run has to leave
+  # PULL_LOG empty: fetching the managed credentials and then dying on a bind
+  # mount is the run this ordering prevents.
+  local workspace clock tz lt pull_log
+  workspace="$(make_scratch)/workspace"
+  clock="${BATS_TEST_TMPDIR}/clock"
+  tz="${clock}/absent-timezone"
+  lt="${clock}/host-localtime"
+  clock_workspace "${workspace}" "${tz}" "${lt}"
+  clock_zoneinfo "${clock}"
+  ln -s "${clock}/zoneinfo/Europe/Berlin" "${lt}"
+  pull_log="${BATS_TEST_TMPDIR}/pulls.log"
+  : >"${pull_log}"
+
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    INFISICAL_ENABLED=true PULL_LOG="${pull_log}" VAULT_RC=0 \
+    HOST_TIMEZONE_FILE="${tz}" HOST_LOCALTIME_LINK="${lt}" \
+    HOST_ZONEINFO_DIR="${clock}/zoneinfo" \
+    bash "$(vault_up_driver)" "${STACK}" up
+  [ "${status}" -ne 0 ]
+  assert_eq "the vault was never dialed" "0" "$(wc -l <"${pull_log}" | tr -d '[:space:]')"
+  assert_not_match "no vault phase line" 'vault: refreshing' "${output}"
+  assert_match "refused" 'compose up refused: this host lacks a clock file' "${stderr}"
+  assert_not_match "compose never ran" 'up -d' "$(stub_log docker)"
 }
 
 # --- public_deploy_env: composed public names for a stable deploy -------------
