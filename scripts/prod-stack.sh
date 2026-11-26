@@ -637,6 +637,15 @@ main() {
       section "Compose"
       phase "compose up"
       repair_stale_runfiles "${root}" 0 || true
+      # The coder service bind-mounts the host's /etc/timezone and /etc/localtime
+      # read-only, both with bind.create_host_path: false, so on a host that ships
+      # neither the daemon refuses the create mid-`up` with
+      # `bind source path does not exist: /etc/timezone`. That line names no remedy,
+      # and the db logs this verb dumps on a failed up say nothing about it, so ask
+      # the same question here — before the vault is dialed or a container is
+      # created — and print the host command that grows the file.
+      host_clock_files_report "${COMPOSE_FILE}" ||
+        die "compose up refused: this host lacks a clock file the coder service mounts read-only (the fix is the note above)"
       # Only `up` interpolates: the exports have to be in place before the first
       # compose call here, and status/logs must stay byte-identical on a host that
       # is configured for public mode. No --env-file means the .env beside the
